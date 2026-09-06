@@ -25,6 +25,17 @@ function hashColor(id: string) {
   return PEER_COLORS[hash % PEER_COLORS.length];
 }
 
+export function identityFromAccount(account: {
+  id: string;
+  name: string;
+}): PeerIdentity {
+  return {
+    id: account.id,
+    name: account.name.trim().slice(0, 24) || "You",
+    color: hashColor(account.id),
+  };
+}
+
 export function getPeerIdentity(): PeerIdentity {
   if (typeof window === "undefined") {
     return { id: "server", name: "Guest", color: PEER_COLORS[0] };

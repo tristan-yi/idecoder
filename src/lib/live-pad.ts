@@ -6,7 +6,7 @@ export const LIVE_PAD_PROBLEM: Problem = {
   topics: ["Pair programming"],
   functionName: "solve",
   description:
-    "This is a **shared CoderPad**. Anyone with the link can type in the editor and in Notes at the same time.\n\nSketch an approach in notes, write code together, and run JavaScript, TypeScript, or Python in the browser.",
+    "This is a **shared CoderPad**. Anyone signed in with the link can type in the editor and in Notes at the same time.\n\nSketch an approach in notes, write code together, and run JavaScript, TypeScript, or Python in the browser.",
   examples: [],
   constraints: [],
   followUps: [],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,19 +12,15 @@ import {
   Users,
 } from "lucide-react";
 import { SettingsModal } from "./SettingsModal";
+import { UserMenu } from "./UserMenu";
 import { requestProblem } from "@/lib/api";
+import type { AppUser } from "@/lib/auth/types";
 import { LIVE_PAD_PROBLEM } from "@/lib/live-pad";
 import { SAMPLE_PROBLEMS, SAMPLE_PROMPTS } from "@/lib/samples";
 import { loadSettings } from "@/lib/settings";
 import { makeSession } from "@/lib/session";
-import {
-  deleteSession,
-  getServerSessionsSnapshot,
-  getSessionsSnapshot,
-  saveSession,
-  sessionsFromSnapshot,
-  subscribeSessions,
-} from "@/lib/storage";
+import { deleteRemotePad, fetchMyPads, type PadListItem } from "@/lib/pads-remote";
+import { deleteSession, saveSession } from "@/lib/storage";
 
 const STEPS = [
   "Reading your prompt…",
@@ -33,7 +29,7 @@ const STEPS = [
   "Building hidden tests…",
 ];
 
-export function HomeClient() {
+export function HomeClient({ user }: { user: AppUser }) {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
@@ -41,21 +37,14 @@ export function HomeClient() {
   const [step, setStep] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [serverConfigured, setServerConfigured] = useState(false);
-  const rawSessions = useSyncExternalStore(
-    subscribeSessions,
-    getSessionsSnapshot,
-    getServerSessionsSnapshot,
-  );
-  const sessions = useMemo(
-    () => sessionsFromSnapshot(rawSessions),
-    [rawSessions],
-  );
+  const [pads, setPads] = useState<PadListItem[]>([]);
 
   useEffect(() => {
     fetch("/api/generate")
       .then((r) => r.json())
       .then((d) => setServerConfigured(Boolean(d.configured)))
       .catch(() => setServerConfigured(false));
+    void fetchMyPads().then(setPads);
   }, []);
 
   useEffect(() => {
@@ -108,14 +97,17 @@ export function HomeClient() {
           </span>
           <span className="text-sm font-semibold tracking-wide">idecoder</span>
         </div>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-mute hover:bg-white/5 hover:text-white"
-        >
-          <Settings size={16} />
-          Settings
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-mute hover:bg-white/5 hover:text-white"
+          >
+            <Settings size={16} />
+            Settings
+          </button>
+          <UserMenu user={user} />
+        </div>
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-5 pb-16 pt-8">
@@ -129,8 +121,8 @@ export function HomeClient() {
         <p className="mt-4 max-w-xl text-base leading-7 text-mute">
           Drop in an interview prompt or a rough idea. idecoder turns it into a
           LeetCode-style problem on the left and a CoderPad editor on the right.
-          Share the URL to pair in real time — code, notes, and cursors stay in
-          sync.
+          Pads live on your account. Share the URL when you want someone else to
+          join — they sign in as themselves.
         </p>
 
         <form
@@ -169,7 +161,7 @@ export function HomeClient() {
               Start a live pad
             </button>
             <span className="text-xs text-mute">
-              Paste any question, or open a blank room and share the link.
+              Your pads stay on this account. Share a link only when you want a pair.
             </span>
           </div>
         </form>
@@ -210,11 +202,11 @@ export function HomeClient() {
           ))}
         </div>
 
-        {sessions.length > 0 && (
+        {pads.length > 0 && (
           <section className="mt-12">
-            <h2 className="mb-3 text-sm font-medium text-mute">Recent pads</h2>
+            <h2 className="mb-3 text-sm font-medium text-mute">Your pads</h2>
             <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-panel">
-              {sessions.map((session) => (
+              {pads.map(({ session, owner }) => (
                 <li key={session.id} className="flex items-center gap-3 px-4 py-3">
                   <button
                     type="button"
@@ -225,18 +217,29 @@ export function HomeClient() {
                       {session.problem.title}
                     </div>
                     <div className="text-xs text-mute">
-                      {session.problem.difficulty} ·{" "}
+                      {session.problem.difficulty}
+                      {owner ? "" : " · joined"} ·{" "}
                       {new Date(session.updatedAt).toLocaleString()}
                     </div>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteSession(session.id)}
-                    className="rounded-md p-1.5 text-mute hover:bg-white/5 hover:text-hard"
-                    aria-label={`Delete ${session.problem.title}`}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {owner ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void deleteRemotePad(session.id).then((ok) => {
+                          if (!ok) return;
+                          deleteSession(session.id);
+                          setPads((current) =>
+                            current.filter((item) => item.session.id !== session.id),
+                          );
+                        });
+                      }}
+                      className="rounded-md p-1.5 text-mute hover:bg-white/5 hover:text-hard"
+                      aria-label={`Delete ${session.problem.title}`}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </ul>

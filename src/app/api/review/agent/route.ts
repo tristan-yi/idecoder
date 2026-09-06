@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth/user";
 import { createId } from "@/lib/id";
 import {
   MISSING_KEY_MESSAGE,
@@ -53,6 +54,9 @@ function isAllowedPath(path: string) {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireUser();
+  if (gate.response) return gate.response;
+
   const auth = resolveAuth(req);
   if (!auth) {
     return NextResponse.json({ error: MISSING_KEY_MESSAGE }, { status: 401 });

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth/user";
 import { fromB64 } from "@/lib/collab/bytes";
 import { isPadId } from "@/lib/collab/fields";
-import { applyPadSync, leavePad } from "@/lib/collab/store";
+import { applyPadSync, ensurePadAccess, leavePad } from "@/lib/collab/store";
 import { hasDatabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -19,12 +20,19 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const gate = await requireUser();
+  if (gate.response) return gate.response;
+
   const { id } = await ctx.params;
   if (!isPadId(id)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
   if (!hasDatabase()) {
     return NextResponse.json({ error: "Live pads are not configured" }, { status: 503 });
+  }
+  const access = await ensurePadAccess(id, gate.user.id);
+  if (access === "missing") {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
   const body = (await req.json()) as SyncBody;

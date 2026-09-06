@@ -11,12 +11,14 @@ import { PresenceBar } from "./PresenceBar";
 import { ProblemPanel } from "./ProblemPanel";
 import { SettingsModal } from "./SettingsModal";
 import { Split } from "./Split";
+import { UserMenu } from "./UserMenu";
 import { codeKey, META_KEY, NOTES_KEY } from "@/lib/collab/fields";
 import { useCollab } from "@/lib/collab/use-collab";
 import { executeCode } from "@/lib/execute";
 import { LANGUAGES, NO_RUNNER_MESSAGE, languageMeta } from "@/lib/languages";
 import { warmPython, type PythonStage } from "@/lib/python";
 import { requestProblem } from "@/lib/api";
+import type { AppUser } from "@/lib/auth/types";
 import { fetchPadWithRetry, publishPad } from "@/lib/pads-remote";
 import { makeSession } from "@/lib/session";
 import {
@@ -50,7 +52,7 @@ function useWideLayout() {
   );
 }
 
-export function PadClient({ id }: { id: string }) {
+export function PadClient({ id, user }: { id: string; user: AppUser }) {
   const router = useRouter();
   const hydrated = useHydrated();
   const wide = useWideLayout();
@@ -90,7 +92,12 @@ export function PadClient({ id }: { id: string }) {
     async () => {},
   );
 
-  const collab = useCollab(readyId === id && session ? id : null, session, http);
+  const collab = useCollab(
+    readyId === id && session ? id : null,
+    session,
+    http,
+    user,
+  );
   const { doc, awareness, status, peers, synced, setName } = collab;
 
   function persist(next: Session) {
@@ -177,7 +184,7 @@ export function PadClient({ id }: { id: string }) {
       setCopied(true);
       setShareHint(
         status === "live"
-          ? "Anyone with this link can edit live."
+          ? "Anyone signed in with this link can join live."
           : "Copied. Another tab on this computer will sync; live sharing across devices needs the server database.",
       );
       window.setTimeout(() => setCopied(false), 1600);
@@ -513,6 +520,7 @@ export function PadClient({ id }: { id: string }) {
           >
             <Settings size={16} />
           </button>
+          <UserMenu user={user} />
         </div>
       </header>
 

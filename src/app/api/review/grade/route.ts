@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth/user";
 import { MISSING_KEY_MESSAGE, complete, extractJson, resolveAuth } from "@/lib/llm/server";
 import type { ExplanationGrade, ReviewTask } from "@/lib/review/types";
 
@@ -46,6 +47,9 @@ type GradeItem = {
 };
 
 export async function POST(req: Request) {
+  const gate = await requireUser();
+  if (gate.response) return gate.response;
+
   const auth = resolveAuth(req);
   if (!auth) {
     return NextResponse.json({ error: MISSING_KEY_MESSAGE }, { status: 401 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth/user";
 import { complete, extractJson, resolveAuth } from "@/lib/llm/server";
 import {
   normalizeSkin,
@@ -39,6 +40,9 @@ Rules:
 - acceptanceHints stay at the level of observable behaviour.`;
 
 export async function POST(req: Request) {
+  const gate = await requireUser();
+  if (gate.response) return gate.response;
+
   const body = (await req.json().catch(() => ({}))) as { templateId?: string };
   const template = pickTemplate(body.templateId);
   const fallback = pickDefaultSkin(template);

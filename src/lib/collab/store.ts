@@ -65,18 +65,79 @@ function diffFromDoc(ydoc: string, sv: Uint8Array, update?: Uint8Array) {
   }
 }
 
-export async function upsertPad(session: Session) {
+export async function listUserPads(userId: string): Promise<
+  { session: Session; owner: boolean }[]
+> {
+  const sql = getSql();
+  if (!sql) return [];
+  const rows = (await sql`
+    SELECT payload, owner_id
+    FROM pads
+    WHERE owner_id = ${userId}
+       OR id IN (SELECT pad_id FROM pad_members WHERE user_id = ${userId})
+    ORDER BY updated_at DESC
+    LIMIT 50
+  `) as { payload: unknown; owner_id: string | null }[];
+  return rows.flatMap((row) => {
+    if (!isSession(row.payload)) return [];
+    return [{ session: row.payload, owner: row.owner_id === userId }];
+  });
+}
+
+export async function ensurePadAccess(
+  id: string,
+  userId: string,
+): Promise<"missing" | "ok"> {
+  const sql = getSql();
+  if (!sql) return "missing";
+  const rows = (await sql`
+    SELECT owner_id FROM pads WHERE id = ${id}
+  `) as { owner_id: string | null }[];
+  if (!rows[0]) return "missing";
+  if (!rows[0].owner_id) {
+    await sql`
+      UPDATE pads SET owner_id = ${userId}
+      WHERE id = ${id} AND owner_id IS NULL
+    `;
+    return "ok";
+  }
+  if (rows[0].owner_id === userId) return "ok";
+  await sql`
+    INSERT INTO pad_members (pad_id, user_id)
+    VALUES (${id}, ${userId})
+    ON CONFLICT DO NOTHING
+  `;
+  return "ok";
+}
+
+export async function deleteUserPad(id: string, userId: string) {
+  const sql = getSql();
+  if (!sql) return false;
+  const rows = (await sql`
+    DELETE FROM pads WHERE id = ${id} AND owner_id = ${userId}
+    RETURNING id
+  `) as { id: string }[];
+  return rows.length > 0;
+}
+
+export async function upsertPad(session: Session, userId: string) {
   const sql = getSql();
   if (!sql) return false;
   const initial = encodeInitialDoc(session);
   await sql`
-    INSERT INTO pads (id, payload, ydoc)
-    VALUES (${session.id}, ${JSON.stringify(session)}::jsonb, ${initial})
+    INSERT INTO pads (id, payload, ydoc, owner_id)
+    VALUES (
+      ${session.id},
+      ${JSON.stringify(session)}::jsonb,
+      ${initial},
+      ${userId}
+    )
     ON CONFLICT (id) DO UPDATE SET
       payload = EXCLUDED.payload,
       updated_at = now()
   `;
-  return true;
+  const access = await ensurePadAccess(session.id, userId);
+  return access === "ok";
 }
 
 export async function getPad(id: string): Promise<Session | null> {

@@ -6,7 +6,7 @@ import {
   removeAwarenessStates,
 } from "y-protocols/awareness";
 import { fromB64, toB64 } from "./bytes";
-import { getPeerIdentity, type PeerIdentity } from "./identity";
+import { getPeerIdentity, identityFromAccount, type PeerIdentity } from "./identity";
 
 export type CollabStatus = "connecting" | "live" | "local" | "offline";
 
@@ -60,12 +60,18 @@ export class PadProvider {
   onStatus?: (status: CollabStatus) => void;
   onPeers?: () => void;
 
-  constructor(opts: { padId: string; http: boolean }) {
+  constructor(opts: {
+    padId: string;
+    http: boolean;
+    account?: { id: string; name: string };
+  }) {
     this.padId = opts.padId;
     this.http = opts.http;
     this.doc = new Y.Doc();
     this.awareness = new Awareness(this.doc);
-    this.identity = getPeerIdentity();
+    this.identity = opts.account
+      ? identityFromAccount(opts.account)
+      : getPeerIdentity();
     this.awareness.setLocalStateField("user", {
       name: this.identity.name,
       color: this.identity.color,

@@ -15,6 +15,7 @@ export function useCollab(
   padId: string | null,
   session: Session | null,
   http: boolean,
+  account?: { id: string; name: string },
 ) {
   const [status, setStatus] = useState<CollabStatus>("connecting");
   const [peers, setPeers] = useState<PeerInfo[]>([]);
@@ -29,7 +30,7 @@ export function useCollab(
     if (!padId) return;
 
     let cancelled = false;
-    const room = new PadProvider({ padId, http });
+    const room = new PadProvider({ padId, http, account });
     room.onStatus = (next) => {
       if (!cancelled) setStatus(next);
     };
@@ -52,7 +53,7 @@ export function useCollab(
       setProvider(null);
       room.destroy();
     };
-  }, [padId, http]);
+  }, [padId, http, account?.id, account?.name]);
 
   const setName = useCallback((name: string) => {
     const next = savePeerName(name);
