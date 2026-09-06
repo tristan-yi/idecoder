@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Activity,
   GitPullRequestArrow,
   Loader2,
   Settings,
@@ -29,7 +30,13 @@ const STEPS = [
   "Building hidden tests…",
 ];
 
-export function HomeClient({ user }: { user: AppUser }) {
+export function HomeClient({
+  user,
+  admin,
+}: {
+  user: AppUser;
+  admin?: boolean;
+}) {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
@@ -98,6 +105,15 @@ export function HomeClient({ user }: { user: AppUser }) {
           <span className="text-sm font-semibold tracking-wide">idecoder</span>
         </div>
         <div className="flex items-center gap-1">
+          {admin ? (
+            <Link
+              href="/admin"
+              className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-mute hover:bg-white/5 hover:text-white"
+            >
+              <Activity size={16} />
+              Insights
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
