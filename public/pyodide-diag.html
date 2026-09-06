@@ -1,0 +1,192 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>pyodide worker diagnostic</title>
+  </head>
+  <body style="font: 13px/1.6 ui-monospace, monospace; padding: 16px">
+    <h1 style="font-size: 15px">pyodide worker diagnostic</h1>
+    <p>
+      Isolates which worker context can load Pyodide. Results are plain text so
+      they can be read with Runtime.evaluate on document.body.innerText.
+    </p>
+    <pre id="out">running…</pre>
+    <script>
+      const INDEX_URL = "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/";
+      const lines = [];
+      const el = document.getElementById("out");
+
+      function log(text) {
+        lines.push(text);
+        el.textContent = lines.join("\n");
+      }
+
+      function once(worker, timeoutMs) {
+        return new Promise((resolve) => {
+          const timer = setTimeout(
+            () => resolve({ kind: "timeout" }),
+            timeoutMs,
+          );
+          worker.onmessage = (e) => {
+            clearTimeout(timer);
+            resolve({ kind: "message", data: e.data });
+          };
+          worker.onerror = (e) => {
+            clearTimeout(timer);
+            resolve({ kind: "error", message: e.message });
+          };
+        });
+      }
+
+      function blobWorker(source) {
+        const url = URL.createObjectURL(
+          new Blob([source], { type: "text/javascript" }),
+        );
+        return new Worker(url);
+      }
+
+      // A: blob worker doing a cross-origin importScripts. This is what the
+      // app used to do.
+      async function testA() {
+        const src = `
+          try {
+            importScripts("${INDEX_URL}pyodide.js");
+            self.postMessage({ ok: true, hasLoader: typeof self.loadPyodide });
+          } catch (e) {
+            self.postMessage({ ok: false, error: String(e) });
+          }
+        `;
+        const w = blobWorker(src);
+        const r = await once(w, 8000);
+        w.terminate();
+        log(
+          "A blob worker + importScripts(cdn): " +
+            (r.kind === "message"
+              ? r.data.ok
+                ? "OK (loadPyodide is " + r.data.hasLoader + ")"
+                : "FAILED " + r.data.error
+              : r.kind === "error"
+                ? "WORKER ERROR " + r.message
+                : "TIMEOUT"),
+        );
+      }
+
+      // B: blob worker doing a cross-origin fetch. Tells us whether the blob
+      // context can reach the CDN at all, or only importScripts is refused.
+      async function testB() {
+        const src = `
+          fetch("${INDEX_URL}pyodide.js")
+            .then((res) => res.text())
+            .then((text) => self.postMessage({ ok: true, bytes: text.length }))
+            .catch((e) => self.postMessage({ ok: false, error: String(e) }));
+        `;
+        const w = blobWorker(src);
+        const r = await once(w, 45000);
+        w.terminate();
+        log(
+          "B blob worker + fetch(cdn):          " +
+            (r.kind === "message"
+              ? r.data.ok
+                ? "OK (" + r.data.bytes + " bytes)"
+                : "FAILED " + r.data.error
+              : r.kind === "error"
+                ? "WORKER ERROR " + r.message
+                : "TIMEOUT"),
+        );
+      }
+
+      // C: same-origin *module* worker importing the ESM build.
+      async function testC() {
+        const w = new Worker("/pyodide-probe.js", { type: "module" });
+        const r = await once(w, 45000);
+        w.terminate();
+        log(
+          "C module worker + import(pyodide.mjs):" +
+            (r.kind === "message"
+              ? r.data.ok
+                ? " OK (loadPyodide is " + r.data.hasLoader + ")"
+                : " FAILED " + r.data.error
+              : r.kind === "error"
+                ? " WORKER ERROR " + r.message
+                : " TIMEOUT"),
+        );
+      }
+
+      // D: the real app worker, all the way through booting the wasm and
+      // running Python. This is the one that proves the follow-on asset
+      // fetches (wasm + stdlib) also work.
+      async function testD() {
+        const w = new Worker(
+          "/pyodide-worker.js?indexURL=" + encodeURIComponent(INDEX_URL),
+          { type: "module" },
+        );
+        const stages = [];
+        const done = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve({ kind: "timeout" }), 180000);
+          w.onmessage = (e) => {
+            const d = e.data || {};
+            if (d.type === "progress") {
+              stages.push(d.stage);
+              log("  D stage: " + d.stage);
+              return;
+            }
+            if (d.type === "done") {
+              clearTimeout(timer);
+              resolve({ kind: "done", data: d });
+            }
+          };
+          w.onerror = (e) => {
+            clearTimeout(timer);
+            resolve({ kind: "error", message: e.message });
+          };
+          w.postMessage({ type: "run", code: 'print("SMOKE_OK")' });
+        });
+        w.terminate();
+
+        if (done.kind === "done") {
+          log(
+            "D real worker end to end:            " +
+              (done.data.ok
+                ? "OK stdout=" + JSON.stringify(done.data.stdout)
+                : "FAILED " + done.data.stderr),
+          );
+        } else {
+          log(
+            "D real worker end to end:            " +
+              (done.kind === "error" ? "WORKER ERROR " + done.message : "TIMEOUT"),
+          );
+        }
+        log("  D stages seen: " + JSON.stringify(stages));
+      }
+
+      (async () => {
+        lines.length = 0;
+        log("index url: " + INDEX_URL);
+        log("page origin: " + location.origin);
+        log("");
+        try {
+          await testA();
+        } catch (e) {
+          log("A threw " + String(e));
+        }
+        try {
+          await testB();
+        } catch (e) {
+          log("B threw " + String(e));
+        }
+        try {
+          await testC();
+        } catch (e) {
+          log("C threw " + String(e));
+        }
+        try {
+          await testD();
+        } catch (e) {
+          log("D threw " + String(e));
+        }
+        log("");
+        log("DIAGNOSTIC COMPLETE");
+      })();
+    </script>
+  </body>
+</html>

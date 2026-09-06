@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0d10;
+  --foreground: #ececec;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: #0b0d10;
+  --color-panel: #12151a;
+  --color-line: #232833;
+  --color-mute: #8b93a1;
+  --color-mint: #3ee0b2;
+  --color-easy: #2cbe8a;
+  --color-medium: #e6b325;
+  --color-hard: #f05163;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-ink);
+  color: var(--foreground);
+}
+
+body {
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.problem-md {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #d5d9e0;
+}
+
+.problem-md p {
+  margin: 0.85rem 0;
+}
+
+.problem-md strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.problem-md code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: #0e1116;
+  border: 1px solid #232833;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.problem-md pre {
+  background: #0e1116;
+  border: 1px solid #232833;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow: auto;
+  margin: 0.85rem 0;
+}
+
+.problem-md pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.problem-md ul,
+.problem-md ol {
+  padding-left: 1.2rem;
+  margin: 0.7rem 0;
+}
+
+.problem-md li {
+  margin: 0.25rem 0;
+}
+
+.problem-md h2,
+.problem-md h3 {
+  color: #fff;
+  font-size: 0.95rem;
+  margin-top: 1.25rem;
+}
+
+.yRemoteSelection {
+  opacity: 0.35;
+}
+
+.yRemoteSelectionHead {
+  position: absolute;
+  box-sizing: border-box;
+  height: 100%;
+  border-left: 2px solid currentColor;
+}
+
+.yRemoteSelectionHead::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+}
