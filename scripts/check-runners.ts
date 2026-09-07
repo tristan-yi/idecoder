@@ -361,6 +361,115 @@ console.log("\nTypeScript via sucrase, and JavaScript");
   );
 }
 
+console.log("\nClass / design-problem harness (CoderPad-style)");
+{
+  const doc = `class Document:
+    def __init__(self):
+        self.text = ""
+    def apply(self, chunk):
+        self.text += chunk
+        return self.text`;
+
+  const ctor = resultsFor("python", doc, "Document", [
+    { args: [], expected: null },
+    { args: [], expected: null },
+    { args: [], expected: null },
+  ]);
+  check(
+    "Python Document() vs expected null passes (constructor is not compared as the instance)",
+    ctor.results !== null && ctor.results.length === 3 && ctor.results.every((r) => r.pass && r.actual === null),
+    JSON.stringify(ctor.results),
+  );
+
+  const leftover = `class Solution:
+    pass
+
+${doc}`;
+  const leftoverRun = resultsFor("python", leftover, "Document", [
+    { args: [], expected: null },
+  ]);
+  check(
+    "Python prefers a class named Document over an empty Solution leftover",
+    leftoverRun.results !== null && leftoverRun.results.every((r) => r.pass),
+    JSON.stringify(leftoverRun.results),
+  );
+
+  const seq = resultsFor("python", doc, "Document", [
+    {
+      args: [
+        ["Document", "apply", "apply"],
+        [[], ["a"], ["b"]],
+      ],
+      expected: [null, "a", "ab"],
+    },
+  ]);
+  check(
+    "Python LeetCode-style command sequence keeps one instance",
+    seq.results !== null &&
+      seq.results[0]?.pass === true &&
+      JSON.stringify(seq.results[0]?.actual) === JSON.stringify([null, "a", "ab"]),
+    JSON.stringify(seq.results),
+  );
+
+  const seqFail = resultsFor("python", doc, "Document", [
+    {
+      args: [
+        ["Document", "apply"],
+        [[], ["a"]],
+      ],
+      expected: [null, "zzz"],
+    },
+  ]);
+  check(
+    "Python sequence mismatch fails the apply step, not the constructor",
+    seqFail.results !== null &&
+      seqFail.results[0]?.pass === false &&
+      seqFail.results[0]?.steps?.[0]?.pass === true &&
+      seqFail.results[0]?.steps?.[1]?.pass === false,
+    JSON.stringify(seqFail.results),
+  );
+
+  const methodOnDoc = resultsFor(
+    "python",
+    doc,
+    "apply",
+    [{ args: ["hi"], expected: "hi" }],
+  );
+  check(
+    "Python finds apply on Document when functionName is the method",
+    methodOnDoc.results !== null && methodOnDoc.results.every((r) => r.pass),
+    JSON.stringify(methodOnDoc.results),
+  );
+
+  const jsDoc = `class Document {
+  constructor() { this.text = ""; }
+  apply(chunk) { this.text += chunk; return this.text; }
+}`;
+  const jsCtor = resultsFor("javascript", jsDoc, "Document", [
+    { args: [], expected: null },
+  ]);
+  check(
+    "JavaScript class constructor vs null passes",
+    jsCtor.results !== null && jsCtor.results.every((r) => r.pass && r.actual === null),
+    JSON.stringify(jsCtor.results),
+  );
+
+  const jsSeq = resultsFor("javascript", jsDoc, "Document", [
+    {
+      args: [
+        ["Document", "apply", "apply"],
+        [[], ["a"], ["b"]],
+      ],
+      expected: [null, "a", "ab"],
+    },
+  ]);
+  check(
+    "JavaScript command sequence keeps one instance",
+    jsSeq.results !== null && jsSeq.results[0]?.pass === true,
+    JSON.stringify(jsSeq.results),
+  );
+}
+
 console.log(
   failures === 0
     ? "\nAll runner checks passed."

@@ -51,12 +51,23 @@ export type Settings = {
   model: string;
 };
 
+export type TestStep = {
+  call: string;
+  expected: unknown;
+  actual: unknown;
+  pass: boolean;
+  error?: string | null;
+};
+
 export type TestResult = {
   index: number;
   pass: boolean;
   actual: unknown;
   expected: unknown;
   error: string | null;
+  call?: string;
+  steps?: TestStep[] | null;
+  note?: string | null;
 };
 
 export type RunOutcome = {

@@ -1,6 +1,87 @@
 "use client";
 
-import type { Example, RunOutcome, TestCase } from "@/lib/types";
+import type { Example, RunOutcome, TestCase, TestResult } from "@/lib/types";
+
+function dump(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function CaseBlock({
+  result,
+  test,
+}: {
+  result: TestResult;
+  test?: TestCase;
+}) {
+  const steps = result.steps?.filter(Boolean) ?? [];
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${
+        result.pass ? "border-easy/30 bg-easy/10" : "border-hard/30 bg-hard/10"
+      }`}
+    >
+      <div className={result.pass ? "text-easy" : "text-hard"}>
+        Case {result.index + 1} {result.pass ? "passed" : "failed"}
+      </div>
+      {result.call ? (
+        <div className="text-zinc-300">
+          <span className="text-mute">call: </span>
+          {result.call}
+        </div>
+      ) : test ? (
+        <div className="text-zinc-300">
+          <span className="text-mute">input / args: </span>
+          {dump(test.args)}
+        </div>
+      ) : null}
+      {steps.length > 1 ? (
+        <ol className="mt-2 space-y-1.5 border-l border-line pl-3">
+          {steps.map((step, i) => (
+            <li key={i} className={step.pass ? "text-zinc-300" : "text-hard"}>
+              <div>
+                <span className="text-mute">{i + 1}. </span>
+                {step.call}{" "}
+                <span className={step.pass ? "text-easy" : "text-hard"}>
+                  {step.pass ? "ok" : "fail"}
+                </span>
+              </div>
+              <div className="pl-4 text-[12px] leading-5">
+                <div>
+                  <span className="text-mute">expected: </span>
+                  {dump(step.expected)}
+                </div>
+                <div>
+                  <span className="text-mute">actual: </span>
+                  {dump(step.actual)}
+                </div>
+                {step.error ? <div>{step.error}</div> : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <>
+          <div className="text-zinc-300">
+            <span className="text-mute">expected: </span>
+            {dump(result.expected)}
+          </div>
+          <div className="text-zinc-300">
+            <span className="text-mute">actual: </span>
+            {dump(result.actual)}
+          </div>
+        </>
+      )}
+      {result.error ? <div className="text-hard">{result.error}</div> : null}
+      {result.note ? (
+        <div className="mt-1 text-[12px] leading-5 text-mute">{result.note}</div>
+      ) : null}
+    </div>
+  );
+}
 
 export function ConsolePane({
   examples,
@@ -43,6 +124,12 @@ export function ConsolePane({
                   <span className="text-mute">Expected: </span>
                   {example.output}
                 </div>
+                {example.explanation ? (
+                  <div className="text-mute">
+                    <span>Note: </span>
+                    {example.explanation}
+                  </div>
+                ) : null}
               </div>
             ))}
             {examples.length === 0 && (
@@ -56,32 +143,11 @@ export function ConsolePane({
         {outcome && results && (
           <div className="space-y-3">
             {results.map((result) => (
-              <div
+              <CaseBlock
                 key={result.index}
-                className={`rounded-lg border px-3 py-2 ${
-                  result.pass
-                    ? "border-easy/30 bg-easy/10"
-                    : "border-hard/30 bg-hard/10"
-                }`}
-              >
-                <div className={result.pass ? "text-easy" : "text-hard"}>
-                  Case {result.index + 1} {result.pass ? "passed" : "failed"}
-                </div>
-                {tests[result.index] && (
-                  <div className="text-zinc-300">
-                    args: {JSON.stringify(tests[result.index].args)}
-                  </div>
-                )}
-                <div className="text-zinc-300">
-                  expected: {JSON.stringify(result.expected)}
-                </div>
-                <div className="text-zinc-300">
-                  actual: {JSON.stringify(result.actual)}
-                </div>
-                {result.error && (
-                  <div className="text-hard">{result.error}</div>
-                )}
-              </div>
+                result={result}
+                test={tests[result.index]}
+              />
             ))}
           </div>
         )}

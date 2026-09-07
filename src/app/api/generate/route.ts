@@ -42,7 +42,16 @@ Rules:
 - exampleTests must match the written examples. Include 2–4 exampleTests and 3–6 hiddenTests.
 - args is an array of positional arguments to the function. expected is the return value. Use JSON types only.
 - Include 1–3 followUps.
-- For similar-mode requests: keep the same topics and skill, but change the story, function name, and examples. Do not clone the source title.`;
+- For similar-mode requests: keep the same topics and skill, but change the story, function name, and examples. Do not clone the source title.
+- CLASS / DESIGN problems (LRU Cache, MinStack, Document with apply, etc.):
+  functionName MUST be the class name in PascalCase.
+  Python starter is \`class ClassName:\` with \`__init__\` and methods — not \`class Solution\`. JS/TS starter is \`class ClassName { ... }\`.
+  Tests MUST use the CoderPad/LeetCode command format, one sequence per example:
+    "args": [["ClassName", "methodA", "methodB"], [[constructorArgs...], [methodA args...], [methodB args...]]],
+    "expected": [null, resultA, resultB]
+  The first command is always the constructor; its expected value is always null (constructors return the object, the harness records null).
+  Do NOT emit tests that only call the constructor with args [] and expected null.
+  Examples should show the same command list in Input and the result list in Output.`;
 
 function isLanguageId(value: string): value is LanguageId {
   return ["javascript", "typescript", "python", "java", "cpp"].includes(value);
