@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { CheckSquare, ChevronLeft, Loader2, Play, Settings, Sparkles } from "lucide-react";
-import { CodePane } from "./CodePane";
+import { CodePane, type CodePaneHandle } from "./CodePane";
 import { ConsolePane } from "./ConsolePane";
 import { NotesPane } from "./NotesPane";
 import { PresenceBar } from "./PresenceBar";
@@ -32,6 +32,7 @@ import {
   sessionsFromSnapshot,
   subscribeSessions,
 } from "@/lib/storage";
+import { firstErrorTrace } from "@/lib/trace";
 import type { LanguageId, RunOutcome, Session, TestCase } from "@/lib/types";
 
 function useHydrated() {
@@ -95,6 +96,7 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
   const [followClientId, setFollowClientId] = useState<number | null>(null);
   const [kickingId, setKickingId] = useState<string | null>(null);
   const [hiddenPeerIds, setHiddenPeerIds] = useState<string[]>([]);
+  const codePaneRef = useRef<CodePaneHandle | null>(null);
   const showPyStage = (stage: PythonStage) =>
     setPyStage(stage === "downloading" || stage === "starting" ? stage : null);
   const runRef = useRef<(kind: "run" | "tests" | "submit") => Promise<void>>(
@@ -166,6 +168,17 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
         onProgress: showPyStage,
       });
       setOutcome(result);
+      const loc = firstErrorTrace(result);
+      if (loc?.line != null) {
+        const line = loc.line;
+        if (!wide) setMobileTab("code");
+        queueMicrotask(() => {
+          codePaneRef.current?.setErrorLine(line, loc.headline);
+          codePaneRef.current?.revealLine(line, loc.column ?? undefined);
+        });
+      } else {
+        codePaneRef.current?.setErrorLine(null);
+      }
     } finally {
       setRunning(null);
       setPyStage(null);
@@ -476,6 +489,7 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
     <Split axis="vertical" initial={68}>
       {synced ? (
         <CodePane
+          ref={codePaneRef}
           language={language}
           code={code}
           ytext={doc?.getText(codeKey(language)) ?? null}
@@ -504,6 +518,12 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
         tests={shownTests}
         outcome={outcome}
         mode={consoleMode}
+        onJumpToLine={(line, column) => {
+          if (!wide) setMobileTab("code");
+          const loc = firstErrorTrace(outcome);
+          codePaneRef.current?.setErrorLine(line, loc?.headline);
+          codePaneRef.current?.revealLine(line, column);
+        }}
       />
     </Split>
   );

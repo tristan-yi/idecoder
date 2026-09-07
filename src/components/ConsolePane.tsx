@@ -1,6 +1,7 @@
 "use client";
 
 import type { Example, RunOutcome, TestCase, TestResult } from "@/lib/types";
+import { parseTrace } from "@/lib/trace";
 import {
   caseVerdict,
   outcomeVerdict,
@@ -21,20 +22,69 @@ function verdictClass(verdict: Verdict | "passed") {
   return verdict === "Accepted" || verdict === "passed" ? "text-easy" : "text-hard";
 }
 
-function Trace({ text }: { text: string }) {
+function ErrorBlock({
+  text,
+  onJumpToLine,
+}: {
+  text: string;
+  onJumpToLine?: (line: number, column?: number) => void;
+}) {
+  const info = parseTrace(text);
+  const hasTrace = text.includes("\n");
   return (
-    <pre className="mt-2 whitespace-pre-wrap text-[12px] leading-5 text-hard">
-      {text}
-    </pre>
+    <div className="mt-2">
+      <div className="text-hard">
+        {info.line != null ? (
+          onJumpToLine ? (
+            <button
+              type="button"
+              className="font-semibold underline decoration-hard/50 underline-offset-2 hover:decoration-hard"
+              onClick={() => onJumpToLine(info.line!, info.column ?? undefined)}
+            >
+              Line {info.line}
+            </button>
+          ) : (
+            <span className="font-semibold">Line {info.line}</span>
+          )
+        ) : null}
+        {info.line != null ? <span> · </span> : null}
+        <span>
+          {info.type ? `${info.type}: ${info.message}` : info.message || text}
+        </span>
+      </div>
+      {info.snippet ? (
+        <pre className="mt-1 overflow-x-auto rounded-md bg-hard/10 px-2 py-1 text-[12px] leading-5 text-zinc-200">
+          {info.snippet}
+        </pre>
+      ) : null}
+      {hasTrace ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[11px] text-mute">
+            Full traceback
+          </summary>
+          <pre className="mt-1 whitespace-pre-wrap text-[12px] leading-5 text-hard/90">
+            {text}
+          </pre>
+        </details>
+      ) : null}
+    </div>
   );
+}
+
+function wrongAnswerHint(result: TestResult) {
+  if (result.pass || result.error) return null;
+  const call = result.call ? `${result.call} ` : "";
+  return `${call}returned ${dump(result.actual)}, but the test expected ${dump(result.expected)}.`;
 }
 
 function CaseBlock({
   result,
   test,
+  onJumpToLine,
 }: {
   result: TestResult;
   test?: TestCase;
+  onJumpToLine?: (line: number, column?: number) => void;
 }) {
   const steps = result.steps?.filter(Boolean) ?? [];
   const verdict = caseVerdict(result);
@@ -42,6 +92,7 @@ function CaseBlock({
     !result.pass &&
     !result.error &&
     valueKind(result.actual) !== valueKind(result.expected);
+  const wa = wrongAnswerHint(result);
   return (
     <div
       className={`rounded-lg border px-3 py-2 ${
@@ -82,7 +133,9 @@ function CaseBlock({
                   <span className="text-mute">Output: </span>
                   {dump(step.actual)}
                 </div>
-                {step.error ? <Trace text={step.error} /> : null}
+                {step.error ? (
+                  <ErrorBlock text={step.error} onJumpToLine={onJumpToLine} />
+                ) : null}
               </div>
             </li>
           ))}
@@ -105,7 +158,12 @@ function CaseBlock({
           {valueKind(result.actual)}.
         </div>
       ) : null}
-      {result.error ? <Trace text={result.error} /> : null}
+      {!result.pass && !result.error && wa ? (
+        <div className="mt-1 text-[12px] leading-5 text-hard">{wa}</div>
+      ) : null}
+      {result.error && steps.every((step) => !step.error) ? (
+        <ErrorBlock text={result.error} onJumpToLine={onJumpToLine} />
+      ) : null}
       {result.note ? (
         <div className="mt-1 text-[12px] leading-5 text-mute">{result.note}</div>
       ) : null}
@@ -118,11 +176,13 @@ export function ConsolePane({
   tests,
   outcome,
   mode,
+  onJumpToLine,
 }: {
   examples: Example[];
   tests: TestCase[];
   outcome: RunOutcome | null;
   mode: "tests" | "run";
+  onJumpToLine?: (line: number, column?: number) => void;
 }) {
   const results = outcome?.results;
   const failed = results?.filter((r) => !r.pass).length ?? 0;
@@ -181,6 +241,7 @@ export function ConsolePane({
                 key={result.index}
                 result={result}
                 test={tests[result.index]}
+                onJumpToLine={onJumpToLine}
               />
             ))}
           </div>
@@ -201,7 +262,9 @@ export function ConsolePane({
                 {outcome.stdout}
               </pre>
             )}
-            {outcome.stderr && <Trace text={outcome.stderr} />}
+            {outcome.stderr && (
+              <ErrorBlock text={outcome.stderr} onJumpToLine={onJumpToLine} />
+            )}
             {!outcome.stdout && !outcome.stderr && (
               <p className="text-mute">Finished with no output.</p>
             )}
@@ -211,7 +274,9 @@ export function ConsolePane({
         {outcome?.stdout && results && (
           <pre className="mt-3 whitespace-pre-wrap text-mute">{outcome.stdout}</pre>
         )}
-        {outcome?.stderr && results && <Trace text={outcome.stderr} />}
+        {outcome?.stderr && results && (
+          <ErrorBlock text={outcome.stderr} onJumpToLine={onJumpToLine} />
+        )}
       </div>
     </div>
   );
