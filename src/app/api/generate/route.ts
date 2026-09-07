@@ -50,6 +50,7 @@ Rules:
     "args": [["ClassName", "methodA", "methodB"], [[constructorArgs...], [methodA args...], [methodB args...]]],
     "expected": [null, resultA, resultB]
   The first command is always the constructor; its expected value is always null (constructors return the object, the harness records null).
+  Constructor argv[0] must be the constructor's positional args only, matching __init__/constructor parameters exactly. Do not wrap those args in an extra list, and do not append leftover method inputs such as user_id to the constructor step.
   Do NOT emit tests that only call the constructor with args [] and expected null.
   Examples should show the same command list in Input and the result list in Output.`;
 

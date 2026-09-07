@@ -23,6 +23,29 @@ export function buildHarness(
 
 import inspect as __inspect
 import json as __json
+import traceback as __traceback
+
+
+def __idc_fmt_err(exc):
+    """Full traceback, pointing at solution.py, with harness frames removed."""
+    text = "".join(__traceback.format_exception(type(exc), exc, exc.__traceback__))
+    kept = []
+    skip_next = False
+    for line in text.splitlines():
+        if skip_next:
+            skip_next = False
+            if line.startswith("    ") and "File " not in line:
+                continue
+        if "__idc_" in line or line.rstrip().endswith("in <module>"):
+            skip_next = "File " in line
+            continue
+        line = (
+            line.replace('File "<string>"', 'File "solution.py"')
+            .replace('File "<exec>"', 'File "solution.py"')
+            .replace('File "<stdin>"', 'File "solution.py"')
+        )
+        kept.append(line)
+    return "\\n".join(kept).strip() or "{0}: {1}".format(type(exc).__name__, exc)
 
 
 def __idc_eq(a, b):
@@ -89,6 +112,50 @@ def __idc_has_method(cls, name):
     return callable(raw)
 
 
+def __idc_adapt_args(fn, args):
+    """Match JSON test args to a callable's positional signature.
+
+    Class tests sometimes wrap constructor inputs as one list (and leftover
+    method args), e.g. PermissionManager([[teams, folders, files], user_id])
+    when __init__(self, teams, folders, files) expects three lists.
+    """
+    if not isinstance(args, (list, tuple)):
+        return args
+    args = list(args)
+    try:
+        sig = __inspect.signature(fn)
+    except (TypeError, ValueError):
+        return args
+    positional = []
+    has_var = False
+    for p in sig.parameters.values():
+        if p.kind is __inspect.Parameter.VAR_POSITIONAL:
+            has_var = True
+        elif p.kind in (
+            __inspect.Parameter.POSITIONAL_ONLY,
+            __inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            # inspect.signature(cls) drops self; signature(__init__) does not.
+            if p.name in ("self", "cls") and not positional:
+                continue
+            positional.append(p)
+    if has_var:
+        return args
+    n = len(positional)
+    required = sum(1 for p in positional if p.default is __inspect.Parameter.empty)
+    if required <= len(args) <= n:
+        return args
+    first = args[0] if args else None
+    packed = isinstance(first, (list, tuple)) and required <= len(first) <= n
+    # Too few args: first list is the real positional payload.
+    if packed and len(args) < required:
+        return list(first)
+    # Too many args: leftover method inputs (user_id, etc.). Keep the prefix.
+    if len(args) > n:
+        return args[:n]
+    return args
+
+
 def __idc_resolve():
     name = ${name}
     obj = globals().get(name)
@@ -134,15 +201,18 @@ def __idc_run_class(cls, args, expected):
             step_error = None
             try:
                 if i == 0:
+                    call_args = __idc_adapt_args(cls, call_args)
                     instance = cls(*call_args)
                     actual = None
                     label = cls.__name__
                 else:
-                    actual = getattr(instance, cmd)(*call_args)
+                    method = getattr(instance, cmd)
+                    call_args = __idc_adapt_args(method, call_args)
+                    actual = method(*call_args)
                     label = cmd
             except Exception as err:
                 actual = None
-                step_error = "{0}: {1}".format(type(err).__name__, err)
+                step_error = __idc_fmt_err(err)
                 label = cls.__name__ if i == 0 else cmd
             want = expected[i]
             ok = step_error is None and __idc_eq(actual, want)
@@ -172,6 +242,7 @@ def __idc_run_class(cls, args, expected):
             "error": next((step["error"] for step in steps if step["error"]), None),
         }
 
+    args = __idc_adapt_args(cls, args)
     instance = cls(*args)
     # A constructor's value is the object. Design-problem tests expect null
     # for that step, the way CoderPad and LeetCode do.
@@ -220,10 +291,14 @@ for __i, __t in enumerate(__tests):
             __note = __ran["note"]
             __err = __ran["error"]
         elif __kind == "fn":
+            __args = __idc_adapt_args(__obj, __args)
             __actual = __obj(*__args)
             __ok = __idc_eq(__actual, __expected)
+            __call = __idc_call(${name}, __args)
         else:
-            __actual = getattr(__obj(), ${name})(*__args)
+            __meth = getattr(__obj(), ${name})
+            __args = __idc_adapt_args(__meth, __args)
+            __actual = __meth(*__args)
             __ok = __idc_eq(__actual, __expected)
             __call = __idc_call(__obj.__name__ + "()." + ${name}, __args)
         __results.append({
@@ -242,7 +317,7 @@ for __i, __t in enumerate(__tests):
             "pass": False,
             "actual": None,
             "expected": __expected,
-            "error": "{0}: {1}".format(type(__e).__name__, __e),
+            "error": __idc_fmt_err(__e),
             "call": __idc_call(${name}, __args),
             "steps": None,
             "note": None,
@@ -257,6 +332,7 @@ print(${JSON.stringify(MARKER)} + __json.dumps(__results))
 const __tests = ${testsLiteral(tests)};
 const __results = [];
 const __idcName = ${name};
+const __idcUserLines = ${userCode.split("\n").length};
 
 function __idcEq(a, b) {
   if (Object.is(a, b)) return true;
@@ -280,6 +356,31 @@ function __idcEq(a, b) {
   return false;
 }
 
+function __idcFmtErr(err) {
+  const raw = err && err.stack ? String(err.stack) : String(err);
+  return raw
+    .split("\\n")
+    .filter((line) => {
+      if (line.includes("__idc")) return false;
+      if (line.includes("node:internal")) return false;
+      const m = line.match(/Function:(\\d+)/) || line.match(/<anonymous>:(\\d+)/);
+      if (m) {
+        const n = Number(m[1]) - 1;
+        if (n > __idcUserLines) return false;
+        return true;
+      }
+      if (line.includes("[eval]") || line.includes("runScript")) return false;
+      return true;
+    })
+    .map((line) =>
+      line.replace(/\\(Function:(\\d+):(\\d+)\\)/g, (_, l, c) => {
+        const n = Math.max(1, Number(l) - 1);
+        return "(solution.js:" + n + ":" + c + ")";
+      }),
+    )
+    .join("\\n") || String(err);
+}
+
 function __idcCall(name, args) {
   try {
     return name + "(" + args.map((a) => JSON.stringify(a)).join(", ") + ")";
@@ -295,6 +396,39 @@ function __idcIsClass(fn) {
   const proto = fn.prototype;
   if (!proto || proto === Object.prototype) return false;
   return Object.getOwnPropertyNames(proto).some((k) => k !== "constructor");
+}
+
+function __idcArity(fn) {
+  if (typeof fn !== "function") return null;
+  const src = Function.prototype.toString.call(fn);
+  const ctor = src.match(/constructor\\s*\\(([^)]*)\\)/);
+  const fnMatch =
+    ctor ||
+    src.match(/^(?:async\\s+)?(?:function[\\s*]*)?[^(]*\\(([^)]*)\\)/) ||
+    src.match(/^[^(]*\\(([^)]*)\\)\\s*=>/);
+  if (!fnMatch) return null;
+  const raw = fnMatch[1].trim();
+  if (!raw) return { n: 0, required: 0 };
+  if (raw.includes("{") || raw.includes("[") || raw.includes("...")) return null;
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return { n: 0, required: 0 };
+  return {
+    n: parts.length,
+    required: parts.filter((p) => !p.includes("=")).length,
+  };
+}
+
+function __idcAdaptArgs(fn, args) {
+  if (!Array.isArray(args)) return args;
+  const arity = __idcArity(fn);
+  if (!arity) return args;
+  const { n, required } = arity;
+  if (required <= args.length && args.length <= n) return args;
+  const first = args[0];
+  const packed = Array.isArray(first) && required <= first.length && first.length <= n;
+  if (packed && args.length < required) return first;
+  if (args.length > n) return args.slice(0, n);
+  return args;
 }
 
 function __idcIsSequence(args, expected, cls) {
@@ -315,19 +449,22 @@ function __idcRunClass(cls, args, expected) {
     let instance = null;
     const steps = [];
     for (let i = 0; i < cmds.length; i++) {
-      const callArgs = argv[i];
+      let callArgs = argv[i];
       let actual = null;
       let error = null;
       const label = i === 0 ? cls.name : cmds[i];
       try {
         if (i === 0) {
+          callArgs = __idcAdaptArgs(cls, callArgs);
           instance = new cls(...callArgs);
           actual = null;
         } else {
+          const method = instance[cmds[i]];
+          callArgs = typeof method === "function" ? __idcAdaptArgs(method, callArgs) : callArgs;
           actual = instance[cmds[i]](...callArgs);
         }
       } catch (err) {
-        error = String(err);
+        error = __idcFmtErr(err);
       }
       const want = expected[i];
       const ok = !error && __idcEq(actual, want);
@@ -352,6 +489,7 @@ function __idcRunClass(cls, args, expected) {
       error: steps.find((s) => s.error)?.error ?? null,
     };
   }
+  args = __idcAdaptArgs(cls, args);
   const instance = new cls(...args);
   if (expected == null) {
     return {
@@ -406,12 +544,17 @@ for (let __i = 0; __i < __tests.length; __i++) {
       __note = ran.note;
       __err = ran.error;
     } else if (found.kind === "fn") {
-      __actual = found.obj(...__args);
+      const callArgs = __idcAdaptArgs(found.obj, __args);
+      __actual = found.obj(...callArgs);
       __ok = __idcEq(__actual, __expected);
+      __call = __idcCall(__idcName, callArgs);
     } else {
-      __actual = new found.obj()[__idcName](...__args);
+      const inst = new found.obj();
+      const meth = inst[__idcName];
+      const callArgs = typeof meth === "function" ? __idcAdaptArgs(meth, __args) : __args;
+      __actual = inst[__idcName](...callArgs);
       __ok = __idcEq(__actual, __expected);
-      __call = __idcCall(found.obj.name + "()." + __idcName, __args);
+      __call = __idcCall(found.obj.name + "()." + __idcName, callArgs);
     }
     __results.push({
       index: __i,
@@ -429,7 +572,7 @@ for (let __i = 0; __i < __tests.length; __i++) {
       pass: false,
       actual: null,
       expected: __expected,
-      error: String(__e),
+      error: __idcFmtErr(__e),
       call: __idcCall(__idcName, __args),
       steps: null,
       note: null,

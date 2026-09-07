@@ -39,14 +39,38 @@ function ensure() {
 }
 
 function tidy(text) {
-  const lines = String(text).split("\n");
-  const kept = lines.filter(
-    (line) =>
-      !line.includes("/lib/python3") &&
-      !line.includes("pyodide/_package_loader") &&
-      !line.includes("importlib._bootstrap"),
+  const raw = String(text || "")
+    .replace(/^PythonError:\s*/i, "")
+    .trim();
+  if (!raw) return "";
+  const lines = raw.split("\n").map((line) =>
+    line
+      .replace(/File "<exec>"/g, 'File "solution.py"')
+      .replace(/File "<string>"/g, 'File "solution.py"')
+      .replace(/File "<stdin>"/g, 'File "solution.py"'),
   );
-  return (kept.length ? kept : lines).join("\n").trim();
+  const kept = [];
+  let dropNext = false;
+  for (const line of lines) {
+    if (dropNext) {
+      dropNext = false;
+      if (/^\s+/.test(line) && !line.includes('File "')) continue;
+    }
+    const internal =
+      line.includes("/lib/python") ||
+      line.includes("pyodide/_package_loader") ||
+      line.includes("pyodide/_base") ||
+      line.includes("_pyodide/") ||
+      line.includes("importlib._bootstrap") ||
+      line.includes("pyodide.ffi");
+    if (internal) {
+      dropNext = /^\s*File /.test(line);
+      continue;
+    }
+    kept.push(line);
+  }
+  const cleaned = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned || raw;
 }
 
 self.onmessage = async (event) => {
@@ -84,11 +108,13 @@ self.onmessage = async (event) => {
       stderr: err.join("\n"),
     });
   } catch (runError) {
+    const message =
+      runError && runError.message ? String(runError.message) : String(runError);
     self.postMessage({
       type: "done",
       ok: false,
       stdout: out.join("\n"),
-      stderr: tidy(err.join("\n") + "\n" + String(runError)),
+      stderr: tidy(err.join("\n") + "\n" + message),
     });
   } finally {
     ns.destroy();

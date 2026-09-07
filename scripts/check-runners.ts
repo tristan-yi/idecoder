@@ -181,9 +181,15 @@ console.log("\nPython error handling");
     problem.exampleTests,
   );
   check(
-    "raising solution fails every case with an error string",
+    "raising solution fails every case with a traceback",
     results !== null &&
-      results.every((r) => !r.pass && typeof r.error === "string" && r.error.includes("boom")),
+      results.every(
+        (r) =>
+          !r.pass &&
+          typeof r.error === "string" &&
+          r.error.includes("boom") &&
+          (r.error.includes("Traceback") || r.error.includes("solution.py")),
+      ),
     JSON.stringify(results),
   );
 
@@ -467,6 +473,88 @@ ${doc}`;
     "JavaScript command sequence keeps one instance",
     jsSeq.results !== null && jsSeq.results[0]?.pass === true,
     JSON.stringify(jsSeq.results),
+  );
+
+  const pmPy = `class PermissionManager:
+    def __init__(self, teams, folders, files):
+        self.users = set()
+        for t in teams:
+            uuid, folder_ids, file_ids, user_ids = t
+            self.users.update(user_ids)
+        self.folders = folders
+        self.files = files
+    def owns(self, user_id):
+        return user_id in self.users`;
+  const teams = [["t1", ["f1"], ["x"], ["A"]]];
+  const folders = [["f1"]];
+  const files = [["x"]];
+
+  const pmSeq = resultsFor("python", pmPy, "PermissionManager", [
+    {
+      args: [
+        ["PermissionManager", "owns"],
+        [[[teams, folders, files], "A"], ["A"]],
+      ],
+      expected: [null, true],
+    },
+  ]);
+  check(
+    "Python unpacks PermissionManager([[teams, folders, files], user_id]) to three constructor lists",
+    pmSeq.results !== null &&
+      pmSeq.results[0]?.pass === true &&
+      JSON.stringify(pmSeq.results[0]?.actual) === JSON.stringify([null, true]),
+    JSON.stringify(pmSeq.results),
+  );
+
+  const pmCtor = resultsFor("python", pmPy, "PermissionManager", [
+    { args: [[teams, folders, files], "A"], expected: null },
+  ]);
+  check(
+    "Python non-sequence packed constructor plus leftover user_id still constructs",
+    pmCtor.results !== null && pmCtor.results.every((r) => r.pass && r.actual === null),
+    JSON.stringify(pmCtor.results),
+  );
+
+  const pmSpread = resultsFor("python", pmPy, "PermissionManager", [
+    {
+      args: [
+        ["PermissionManager", "owns"],
+        [[teams, folders, files], ["A"]],
+      ],
+      expected: [null, true],
+    },
+  ]);
+  check(
+    "Python PermissionManager(teams, folders, files) still works when already spread",
+    pmSpread.results !== null && pmSpread.results[0]?.pass === true,
+    JSON.stringify(pmSpread.results),
+  );
+
+  const pmJs = `class PermissionManager {
+  constructor(teams, folders, files) {
+    this.users = new Set();
+    for (const t of teams) {
+      const [uuid, folder_ids, file_ids, user_ids] = t;
+      for (const u of user_ids) this.users.add(u);
+    }
+    this.folders = folders;
+    this.files = files;
+  }
+  owns(user_id) { return this.users.has(user_id); }
+}`;
+  const pmJsSeq = resultsFor("javascript", pmJs, "PermissionManager", [
+    {
+      args: [
+        ["PermissionManager", "owns"],
+        [[[teams, folders, files], "A"], ["A"]],
+      ],
+      expected: [null, true],
+    },
+  ]);
+  check(
+    "JavaScript unpacks PermissionManager([[teams, folders, files], user_id]) to three constructor lists",
+    pmJsSeq.results !== null && pmJsSeq.results[0]?.pass === true,
+    JSON.stringify(pmJsSeq.results),
   );
 }
 

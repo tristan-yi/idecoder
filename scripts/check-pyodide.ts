@@ -8,6 +8,7 @@
  * Usage: npx tsx scripts/check-pyodide.ts
  */
 import { buildHarness, parseResults, MARKER } from "../src/lib/harness";
+import { tidyPythonTrace } from "../src/lib/py-error";
 import { PYODIDE_VERSION } from "../src/lib/python";
 import { SAMPLE_PROBLEMS } from "../src/lib/samples";
 import type { TestCase, TestResult } from "../src/lib/types";
@@ -71,10 +72,12 @@ async function exec(
     await py.runPythonAsync(code, { globals: ns });
     return { ok: true, stdout: out.join("\n"), stderr: err.join("\n") };
   } catch (runError) {
+    const message =
+      runError instanceof Error ? runError.message : String(runError);
     return {
       ok: false,
       stdout: out.join("\n"),
-      stderr: `${err.join("\n")}\n${String(runError)}`.trim(),
+      stderr: tidyPythonTrace(`${err.join("\n")}\n${message}`),
     };
   } finally {
     ns.destroy();

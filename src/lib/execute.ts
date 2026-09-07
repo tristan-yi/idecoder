@@ -1,6 +1,8 @@
 import type { LanguageId, RunOutcome, TestCase } from "./types";
 import { buildHarness, parseResults } from "./harness";
+import { formatJavascriptErrorText } from "./js-error";
 import { NO_RUNNER_MESSAGE, languageMeta } from "./languages";
+import { tidyPythonTrace } from "./py-error";
 import { runPython, type PythonStage } from "./python";
 
 function runJavascript(code: string, timeoutMs = 4000): Promise<RunOutcome> {
@@ -20,7 +22,8 @@ function runJavascript(code: string, timeoutMs = 4000): Promise<RunOutcome> {
           fn(cons);
           self.postMessage({ ok: true, stdout: logs.join("\\n"), stderr: errors.join("\\n") });
         } catch (err) {
-          self.postMessage({ ok: false, stdout: logs.join("\\n"), stderr: String(err) });
+          const stack = err && err.stack ? String(err.stack) : String(err);
+          self.postMessage({ ok: false, stdout: logs.join("\\n"), stderr: stack });
         }
       };
     `;
@@ -47,7 +50,7 @@ function runJavascript(code: string, timeoutMs = 4000): Promise<RunOutcome> {
       resolve({
         ok: e.data.ok && !e.data.stderr,
         stdout: parsed.cleaned,
-        stderr: e.data.stderr || "",
+        stderr: formatJavascriptErrorText(e.data.stderr || ""),
         results: parsed.results,
       });
     };
@@ -58,7 +61,7 @@ function runJavascript(code: string, timeoutMs = 4000): Promise<RunOutcome> {
       resolve({
         ok: false,
         stdout: "",
-        stderr: err.message || "Worker failed",
+        stderr: formatJavascriptErrorText(err.message || "Worker failed"),
         results: null,
       });
     };
@@ -95,7 +98,7 @@ async function runPythonOutcome(
   return {
     ok: run.ok && !run.stderr,
     stdout: parsed.cleaned,
-    stderr: run.stderr || "",
+    stderr: tidyPythonTrace(run.stderr || ""),
     results: parsed.results,
     timedOut: run.timedOut,
   };
