@@ -59,7 +59,7 @@ function CaseBlock({
       ) : test ? (
         <div className="text-zinc-300">
           <span className="text-mute">Input: </span>
-          {dump(test.args)}
+          {dump(test.args ?? test.commands)}
         </div>
       ) : null}
       {steps.length > 1 ? (

@@ -556,6 +556,103 @@ ${doc}`;
     pmJsSeq.results !== null && pmJsSeq.results[0]?.pass === true,
     JSON.stringify(pmJsSeq.results),
   );
+
+  const pmQuery = `class PermissionManager:
+    def __init__(self, teams, folders, files):
+        self.teams = teams
+        self.folders = folders
+        self.files = files
+    def get_fewest(self, user_id):
+        return ["Folder1", "Folder3"] if user_id == "A" else []`;
+
+  const seqExact = resultsFor("python", pmQuery, "PermissionManager", [
+    {
+      args: [
+        ["PermissionManager", "get_fewest"],
+        [[[teams, folders, files]], ["A"]],
+      ],
+      expected: [null, ["Folder1", "Folder3"]],
+    },
+  ]);
+  check(
+    "Python command sequence PermissionManager + get_fewest returns method output, not the instance",
+    seqExact.results !== null &&
+      seqExact.results[0]?.pass === true &&
+      JSON.stringify(seqExact.results[0]?.actual) === JSON.stringify([null, ["Folder1", "Folder3"]]),
+    JSON.stringify(seqExact.results),
+  );
+
+  const seqQueryOnly = resultsFor("python", pmQuery, "PermissionManager", [
+    {
+      args: [
+        ["PermissionManager", "get_fewest"],
+        [[[teams, folders, files]], ["A"]],
+      ],
+      expected: ["Folder1", "Folder3"],
+    },
+  ]);
+  check(
+    "Python sequence with query-only expected still calls get_fewest",
+    seqQueryOnly.results !== null &&
+      seqQueryOnly.results[0]?.pass === true &&
+      JSON.stringify(seqQueryOnly.results[0]?.actual) === JSON.stringify(["Folder1", "Folder3"]),
+    JSON.stringify(seqQueryOnly.results),
+  );
+
+  const namedFields = resultsFor("python", pmQuery, "PermissionManager", [
+    {
+      commands: ["PermissionManager", "get_fewest"],
+      arguments: [[[teams, folders, files]], ["A"]],
+      expected: [null, ["Folder1", "Folder3"]],
+    },
+  ]);
+  check(
+    "Python accepts commands/arguments test fields",
+    namedFields.results !== null && namedFields.results[0]?.pass === true,
+    JSON.stringify(namedFields.results),
+  );
+
+  const flatQuery = resultsFor("python", pmQuery, "PermissionManager", [
+    { args: [teams, folders, files, "A"], expected: ["Folder1", "Folder3"] },
+  ]);
+  check(
+    "Python flat class test constructs then calls get_fewest instead of returning the object",
+    flatQuery.results !== null &&
+      flatQuery.results[0]?.pass === true &&
+      JSON.stringify(flatQuery.results[0]?.actual) === JSON.stringify(["Folder1", "Folder3"]) &&
+      !String(flatQuery.results[0]?.actual).includes("object at"),
+    JSON.stringify(flatQuery.results),
+  );
+
+  const packedQuery = resultsFor("python", pmQuery, "PermissionManager", [
+    { args: [[teams, folders, files], "A"], expected: ["Folder1", "Folder3"] },
+  ]);
+  check(
+    "Python packed constructor plus leftover user_id calls get_fewest",
+    packedQuery.results !== null &&
+      packedQuery.results[0]?.pass === true &&
+      JSON.stringify(packedQuery.results[0]?.actual) === JSON.stringify(["Folder1", "Folder3"]),
+    JSON.stringify(packedQuery.results),
+  );
+
+  const jsQuery = `class PermissionManager {
+  constructor(teams, folders, files) {
+    this.teams = teams;
+    this.folders = folders;
+    this.files = files;
+  }
+  get_fewest(user_id) { return user_id === "A" ? ["Folder1", "Folder3"] : []; }
+}`;
+  const jsFlat = resultsFor("javascript", jsQuery, "PermissionManager", [
+    { args: [teams, folders, files, "A"], expected: ["Folder1", "Folder3"] },
+  ]);
+  check(
+    "JavaScript flat class test constructs then calls get_fewest",
+    jsFlat.results !== null &&
+      jsFlat.results[0]?.pass === true &&
+      JSON.stringify(jsFlat.results[0]?.actual) === JSON.stringify(["Folder1", "Folder3"]),
+    JSON.stringify(jsFlat.results),
+  );
 }
 
 console.log(

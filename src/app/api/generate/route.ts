@@ -43,15 +43,20 @@ Rules:
 - args is an array of positional arguments to the function. expected is the return value. Use JSON types only.
 - Include 1–3 followUps.
 - For similar-mode requests: keep the same topics and skill, but change the story, function name, and examples. Do not clone the source title.
-- CLASS / DESIGN problems (LRU Cache, MinStack, Document with apply, etc.):
+- CLASS / DESIGN problems (LRU Cache, MinStack, PermissionManager, Document with apply, etc.):
   functionName MUST be the class name in PascalCase.
   Python starter is \`class ClassName:\` with \`__init__\` and methods — not \`class Solution\`. JS/TS starter is \`class ClassName { ... }\`.
-  Tests MUST use the CoderPad/LeetCode command format, one sequence per example:
+  Tests MUST use the CoderPad/LeetCode command format, one sequence per example. Prefer:
     "args": [["ClassName", "methodA", "methodB"], [[constructorArgs...], [methodA args...], [methodB args...]]],
     "expected": [null, resultA, resultB]
+  Equivalent shape also allowed:
+    "commands": ["ClassName", "get_fewest"],
+    "arguments": [[[teams, folders, files]], ["A"]],
+    "expected": [null, ["Folder1", "Folder3"]]
   The first command is always the constructor; its expected value is always null (constructors return the object, the harness records null).
   Constructor argv[0] must be the constructor's positional args only, matching __init__/constructor parameters exactly. Do not wrap those args in an extra list, and do not append leftover method inputs such as user_id to the constructor step.
   Do NOT emit tests that only call the constructor with args [] and expected null.
+  If a class has one query method, a flat case like args [constructor..., queryArg] with expected = the query return is also valid; the harness will construct then call the query method. Never expect the constructed object itself.
   Examples should show the same command list in Input and the result list in Output.`;
 
 function isLanguageId(value: string): value is LanguageId {

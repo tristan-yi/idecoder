@@ -14,8 +14,13 @@ export type Example = {
 };
 
 export type TestCase = {
-  args: unknown[];
+  /** Positional args, or LeetCode [commands, argumentLists] for class design tests. */
+  args?: unknown[];
   expected: unknown;
+  /** Alternate class-design shape: ["ClassName", "method", ...] */
+  commands?: string[];
+  /** Alternate class-design shape: [[ctor args...], [method args...], ...] */
+  arguments?: unknown[][];
 };
 
 export type Problem = {
