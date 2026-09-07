@@ -11,6 +11,8 @@ import { languageMeta } from "@/lib/languages";
 
 export type CodePaneHandle = {
   revealPeer: (clientId: number) => boolean;
+  revealLine: (line: number, column?: number) => void;
+  setErrorLine: (line: number | null, message?: string) => void;
 };
 
 export function CodePane({
@@ -37,6 +39,7 @@ export function CodePane({
   const meta = languageMeta(language);
   const [editor, setEditor] = useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const bindingRef = useRef<MonacoBinding | null>(null);
   const onFocusRef = useRef(onFocus);
   const onFollowedRef = useRef(onFollowed);
@@ -45,8 +48,48 @@ export function CodePane({
   onFollowedRef.current = onFollowed;
 
   useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  useEffect(() => {
     const handle: CodePaneHandle = {
       revealPeer: (clientId) => bindingRef.current?.revealPeer(clientId) ?? false,
+      revealLine: (line, column) => {
+        const ed = editorRef.current;
+        if (!ed) return;
+        const model = ed.getModel();
+        if (!model) return;
+        const lineNumber = Math.min(Math.max(1, line), model.getLineCount());
+        const col = Math.min(
+          Math.max(1, column ?? 1),
+          model.getLineMaxColumn(lineNumber),
+        );
+        ed.revealLineInCenter(lineNumber);
+        ed.setPosition({ lineNumber, column: col });
+        ed.focus();
+      },
+      setErrorLine: (line, message) => {
+        const ed = editorRef.current;
+        const monaco = monacoRef.current;
+        if (!ed || !monaco) return;
+        const model = ed.getModel();
+        if (!model) return;
+        if (line == null) {
+          monaco.editor.setModelMarkers(model, "idecoder-runtime", []);
+          return;
+        }
+        const lineNumber = Math.min(Math.max(1, line), model.getLineCount());
+        monaco.editor.setModelMarkers(model, "idecoder-runtime", [
+          {
+            startLineNumber: lineNumber,
+            startColumn: 1,
+            endLineNumber: lineNumber,
+            endColumn: model.getLineMaxColumn(lineNumber),
+            message: message || "Runtime error",
+            severity: monaco.MarkerSeverity.Error,
+          },
+        ]);
+      },
     };
     if (typeof ref === "function") ref(handle);
     else if (ref) ref.current = handle;
@@ -106,6 +149,7 @@ export function CodePane({
       cursorBlinking: "smooth",
     });
     instance.onDidFocusEditorWidget(() => onFocusRef.current?.());
+    editorRef.current = instance;
     setEditor(instance);
   };
 

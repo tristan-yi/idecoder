@@ -36,11 +36,28 @@ export function buildHarness(
   const name = JSON.stringify(functionName);
 
   if (language === "python") {
+    const userLines = userCode.split("\n").length;
     return `${userCode}
 
 import inspect as __inspect
 import json as __json
 import traceback as __traceback
+
+__idc_user_lines = ${userLines}
+
+
+def __idc_file_line(line):
+    marker = "line "
+    if "File " not in line or marker not in line:
+        return None
+    rest = line.split(marker, 1)[1]
+    digits = []
+    for ch in rest:
+        if ch.isdigit():
+            digits.append(ch)
+        else:
+            break
+    return int("".join(digits)) if digits else None
 
 
 def __idc_fmt_err(exc):
@@ -48,21 +65,46 @@ def __idc_fmt_err(exc):
     text = "".join(__traceback.format_exception(type(exc), exc, exc.__traceback__))
     kept = []
     skip_next = False
+    user_line = None
+    snippet = None
     for line in text.splitlines():
         if skip_next:
             skip_next = False
             if line.startswith("    ") and "File " not in line:
                 continue
-        if "__idc_" in line or line.rstrip().endswith("in <module>"):
-            skip_next = "File " in line
-            continue
-        line = (
+        renamed = (
             line.replace('File "<string>"', 'File "solution.py"')
             .replace('File "<exec>"', 'File "solution.py"')
             .replace('File "<stdin>"', 'File "solution.py"')
         )
-        kept.append(line)
-    return "\\n".join(kept).strip() or "{0}: {1}".format(type(exc).__name__, exc)
+        lineno = __idc_file_line(renamed)
+        harness_frame = "__idc_" in renamed or (
+            renamed.rstrip().endswith("in <module>")
+            and (lineno is None or lineno > __idc_user_lines)
+        )
+        if harness_frame:
+            skip_next = "File " in renamed
+            continue
+        if lineno is not None and lineno <= __idc_user_lines:
+            user_line = lineno
+            snippet = None
+        elif (
+            user_line is not None
+            and snippet is None
+            and renamed.startswith("    ")
+            and "File " not in renamed
+        ):
+            snippet = renamed.strip()
+        kept.append(renamed)
+    body = "\\n".join(kept).strip() or "{0}: {1}".format(type(exc).__name__, exc)
+    head = "{0}: {1}".format(type(exc).__name__, exc)
+    if user_line is not None:
+        head = "Line {0} · {1}".format(user_line, head)
+        if snippet:
+            head = head + "\\n    " + snippet
+    if body.startswith(head):
+        return body
+    return head + "\\n" + body
 
 
 def __idc_eq(a, b):
@@ -103,6 +145,9 @@ def __idc_jsonable(value):
         return {str(k): __idc_jsonable(v) for k, v in value.items()}
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    # Never report a constructed instance as the test output.
+    if getattr(type(value), "__module__", "") in ("__main__", ""):
+        return None
     return str(value)
 
 
@@ -264,8 +309,8 @@ def __idc_resolve():
     )
 
 
-def __idc_is_sequence(args, cls):
-    """LeetCode/CoderPad design tests: [commands, argLists] -> results."""
+def __idc_is_ops(args, cls):
+    """True when args is [commands, argumentLists] for a class-design test."""
     if not (isinstance(args, list) and len(args) == 2):
         return False
     cmds, argv = args
@@ -279,12 +324,45 @@ def __idc_is_sequence(args, cls):
     return first == cls.__name__ or globals().get(first) is cls
 
 
+def __idc_as_ops(args, cls):
+    """Unwrap one extra list layer that generators sometimes add around [cmds, argv]."""
+    if __idc_is_ops(args, cls):
+        return list(args[0]), list(args[1])
+    if isinstance(args, list) and len(args) == 1 and isinstance(args[0], list):
+        return __idc_as_ops(args[0], cls)
+    return None
+
+
+def __idc_ops(cls, args, expected, query_hint=None):
+    """Always return (commands, argumentLists). Classes are never called as functions."""
+    found = __idc_as_ops(args, cls)
+    if found:
+        return found
+    ctor_args, rest = __idc_split_args(cls, args)
+    if expected is None and not query_hint:
+        return [cls.__name__], [ctor_args]
+    query = __idc_pick_query(cls, rest, query_hint)
+    if query:
+        return [cls.__name__, query], [ctor_args, rest]
+    return None
+
+
 def __idc_run_sequence(cls, cmds, argv, expected):
+    """LeetCode/CoderPad: construct once (result is null), then call methods on that instance.
+
+    obj = TargetClass(*init_args)
+    output = []
+    for method, args in operations:
+        if method == TargetClass.__name__:
+            output.append(None)
+        else:
+            output.append(getattr(obj, method)(*args))
+    """
     instance = None
     steps = []
     outputs = []
     for i, cmd in enumerate(cmds):
-        call_args = argv[i]
+        call_args = argv[i] if i < len(argv) else []
         step_error = None
         is_ctor = cmd == cls.__name__ or (i == 0 and instance is None)
         try:
@@ -356,9 +434,9 @@ def __idc_run_sequence(cls, cmds, argv, expected):
     note = None
     if not passed:
         note = (
-            "Class tests run like CoderPad/LeetCode: "
+            "Class tests never call result = "
             + cls.__name__
-            + "() is the constructor (expected null), then methods are called on that same instance."
+            + "(*args). The harness constructs the object (expected null), then calls methods on that instance."
         )
     return {
         "actual": overall,
@@ -371,114 +449,37 @@ def __idc_run_sequence(cls, cmds, argv, expected):
 
 
 def __idc_run_class(cls, args, expected, query_hint=None):
-    if __idc_is_sequence(args, cls):
-        return __idc_run_sequence(cls, args[0], args[1], expected)
-
-    ctor_args, rest = __idc_split_args(cls, args)
-    query = __idc_pick_query(cls, rest, query_hint)
-
-    if expected is None and not query_hint:
-        try:
-            cls(*ctor_args)
-        except Exception as err:
-            return {
-                "actual": None,
-                "pass": False,
-                "call": __idc_call(cls.__name__, ctor_args),
-                "steps": None,
-                "note": None,
-                "error": __idc_fmt_err(err),
-            }
-        return {
-            "actual": None,
-            "pass": True,
-            "call": __idc_call(cls.__name__, ctor_args),
-            "steps": [{
-                "call": __idc_call(cls.__name__, ctor_args),
-                "expected": None,
-                "actual": None,
-                "pass": True,
-                "error": None,
-            }],
-            "note": cls.__name__ + "() constructed an instance; constructor steps expect null.",
-            "error": None,
-        }
-
-    if not query:
+    ops = __idc_ops(cls, args, expected, query_hint)
+    if not ops:
         return {
             "actual": None,
             "pass": False,
-            "call": __idc_call(cls.__name__, ctor_args),
+            "call": __idc_call(cls.__name__, args if isinstance(args, list) else []),
             "steps": None,
             "note": (
                 "Class tests need method calls, not the constructed object. "
-                "Use a command sequence like [[ClassName, method, ...], [ctorArgs, methodArgs, ...]] "
+                "Use [[ClassName, method, ...], [ctorArgs, methodArgs, ...]] "
                 "with expected [null, result, ...]."
             ),
             "error": None,
         }
-
-    steps = []
-    try:
-        instance = cls(*ctor_args)
-        steps.append({
-            "call": __idc_call(cls.__name__, ctor_args),
-            "expected": None,
-            "actual": None,
-            "pass": True,
-            "error": None,
-        })
-        method = getattr(instance, query)
-        qargs = __idc_adapt_args(method, rest)
-        actual = method(*qargs)
-        ok = __idc_eq(actual, expected)
-        steps.append({
-            "call": __idc_call(query, qargs),
-            "expected": expected,
-            "actual": __idc_jsonable(actual),
-            "pass": ok,
-            "error": None,
-        })
-        compact = not ctor_args and query_hint
-        return {
-            "actual": __idc_jsonable(actual),
-            "pass": ok,
-            "call": (
-                __idc_call(cls.__name__ + "()." + query, qargs)
-                if compact
-                else " / ".join(s["call"] for s in steps)
-            ),
-            "steps": None if compact else steps,
-            "note": None if ok else (
-                cls.__name__ + "() is constructed, then " + query + "() is called with leftover test args."
-            ),
-            "error": None,
-        }
-    except Exception as err:
-        err_text = __idc_fmt_err(err)
-        label = query if steps else cls.__name__
-        call_args = rest if steps else ctor_args
-        steps.append({
-            "call": __idc_call(label, call_args),
-            "expected": expected if steps else None,
-            "actual": None,
-            "pass": False,
-            "error": err_text,
-        })
-        return {
-            "actual": None,
-            "pass": False,
-            "call": " / ".join(s["call"] for s in steps),
-            "steps": steps,
-            "note": None,
-            "error": err_text,
-        }
+    cmds, argv = ops
+    ran = __idc_run_sequence(cls, cmds, argv, expected)
+    info = __idc_sig(cls)
+    ctor_empty = info is not None and info[1] == 0
+    if query_hint and ctor_empty and ran["steps"] and len(ran["steps"]) == 2 and not ran["error"]:
+        qargs = argv[1] if len(argv) > 1 else []
+        ran["steps"] = None
+        ran["call"] = __idc_call(cls.__name__ + "()." + query_hint, qargs)
+    return ran
 
 
 __tests = __json.loads(${JSON.stringify(testsLiteral(tests))})
 __results = []
 for __i, __t in enumerate(__tests):
     __args = __t.get("args") or []
+    if isinstance(__t.get("commands"), list) and isinstance(__t.get("arguments"), list):
+        __args = [__t.get("commands"), __t.get("arguments")]
     __expected = __t.get("expected")
     try:
         __kind, __obj = __idc_resolve()
@@ -486,6 +487,8 @@ for __i, __t in enumerate(__tests):
         __steps = None
         __note = None
         __err = None
+        # Functions: result = fn(*args). Classes: construct, then call methods.
+        # Never result = ClassName(*args) — that yields "<Class object at 0x...>".
         if __kind == "class":
             __ran = __idc_run_class(__obj, __args, __expected)
             __actual = __ran["actual"]
@@ -564,7 +567,7 @@ function __idcEq(a, b) {
 
 function __idcFmtErr(err) {
   const raw = err && err.stack ? String(err.stack) : String(err);
-  return raw
+  const mapped = raw
     .split("\\n")
     .filter((line) => {
       if (line.includes("__idc")) return false;
@@ -583,8 +586,18 @@ function __idcFmtErr(err) {
         const n = Math.max(1, Number(l) - 1);
         return "(solution.js:" + n + ":" + c + ")";
       }),
-    )
-    .join("\\n") || String(err);
+    );
+  const body = mapped.join("\\n") || String(err);
+  let loc = null;
+  for (const line of mapped) {
+    const m = line.match(/solution\\.js:(\\d+)/);
+    if (m) loc = m[1];
+  }
+  const name = err && err.name ? String(err.name) : "Error";
+  const msg = err && err.message ? String(err.message) : String(err);
+  const head = loc ? "Line " + loc + " · " + name + ": " + msg : name + ": " + msg;
+  if (body.indexOf(head) === 0) return body;
+  return head + "\\n" + body;
 }
 
 function __idcCall(name, args) {
@@ -687,7 +700,7 @@ function __idcPickQuery(cls, rest, hint) {
   return null;
 }
 
-function __idcIsSequence(args, cls) {
+function __idcIsOps(args, cls) {
   if (!Array.isArray(args) || args.length !== 2) return false;
   const cmds = args[0];
   const argv = args[1];
@@ -695,6 +708,22 @@ function __idcIsSequence(args, cls) {
   if (!Array.isArray(argv) || argv.length !== cmds.length) return false;
   if (!argv.every((a) => Array.isArray(a))) return false;
   return cmds[0] === cls.name || cmds[0] === __idcName;
+}
+
+function __idcAsOps(args, cls) {
+  if (__idcIsOps(args, cls)) return [args[0], args[1]];
+  if (Array.isArray(args) && args.length === 1 && Array.isArray(args[0])) return __idcAsOps(args[0], cls);
+  return null;
+}
+
+function __idcOps(cls, args, expected, queryHint) {
+  const found = __idcAsOps(args, cls);
+  if (found) return found;
+  const split = __idcSplitArgs(cls, Array.isArray(args) ? args : []);
+  if (expected == null && !queryHint) return [[cls.name], [split.ctor]];
+  const query = __idcPickQuery(cls, split.rest, queryHint);
+  if (query) return [[cls.name, query], [split.ctor, split.rest]];
+  return null;
 }
 
 function __idcRunSequence(cls, cmds, argv, expected) {
@@ -775,103 +804,33 @@ function __idcRunSequence(cls, cmds, argv, expected) {
     steps,
     note: passed
       ? null
-      : "Class tests run like CoderPad/LeetCode: " + cls.name + "() is the constructor (expected null), then methods are called on that same instance.",
+      : "Class tests never call result = " + cls.name + "(*args). The harness constructs the object (expected null), then calls methods on that instance.",
     error: steps.find((s) => s.error)?.error ?? null,
   };
 }
 
 function __idcRunClass(cls, args, expected, queryHint) {
-  if (__idcIsSequence(args, cls)) {
-    return __idcRunSequence(cls, args[0], args[1], expected);
-  }
-  const split = __idcSplitArgs(cls, args);
-  const ctorArgs = split.ctor;
-  const rest = split.rest;
-  const query = __idcPickQuery(cls, rest, queryHint);
-  if (expected == null && !queryHint) {
-    try {
-      new cls(...ctorArgs);
-    } catch (err) {
-      return {
-        actual: null,
-        pass: false,
-        call: __idcCall(cls.name, ctorArgs),
-        steps: null,
-        note: null,
-        error: __idcFmtErr(err),
-      };
-    }
-    return {
-      actual: null,
-      pass: true,
-      call: __idcCall(cls.name, ctorArgs),
-      steps: [{ call: __idcCall(cls.name, ctorArgs), expected: null, actual: null, pass: true, error: null }],
-      note: cls.name + "() constructed an instance; constructor steps expect null.",
-      error: null,
-    };
-  }
-  if (!query) {
+  const ops = __idcOps(cls, args, expected, queryHint);
+  if (!ops) {
     return {
       actual: null,
       pass: false,
-      call: __idcCall(cls.name, ctorArgs),
+      call: __idcCall(cls.name, Array.isArray(args) ? args : []),
       steps: null,
-      note: "Class tests need method calls, not the constructed object. Use a command sequence like [[ClassName, method, ...], [ctorArgs, methodArgs, ...]] with expected [null, result, ...].",
+      note: "Class tests need method calls, not the constructed object. Use [[ClassName, method, ...], [ctorArgs, methodArgs, ...]] with expected [null, result, ...].",
       error: null,
     };
   }
-  const steps = [];
-  try {
-    const instance = new cls(...ctorArgs);
-    steps.push({
-      call: __idcCall(cls.name, ctorArgs),
-      expected: null,
-      actual: null,
-      pass: true,
-      error: null,
-    });
-    const method = instance[query];
-    const qargs = typeof method === "function" ? __idcAdaptArgs(method, rest) : rest;
-    const actual = instance[query](...qargs);
-    const ok = __idcEq(actual, expected);
-    steps.push({
-      call: __idcCall(query, qargs),
-      expected,
-      actual,
-      pass: ok,
-      error: null,
-    });
-    const compact = (!ctorArgs || ctorArgs.length === 0) && queryHint;
-    return {
-      actual,
-      pass: ok,
-      call: compact
-        ? __idcCall(cls.name + "()." + query, qargs)
-        : steps.map((s) => s.call).join(" / "),
-      steps: compact ? null : steps,
-      note: ok ? null : cls.name + "() is constructed, then " + query + "() is called with leftover test args.",
-      error: null,
-    };
-  } catch (err) {
-    const errText = __idcFmtErr(err);
-    const label = steps.length ? query : cls.name;
-    const callArgs = steps.length ? rest : ctorArgs;
-    steps.push({
-      call: __idcCall(label, callArgs),
-      expected: steps.length ? expected : null,
-      actual: null,
-      pass: false,
-      error: errText,
-    });
-    return {
-      actual: null,
-      pass: false,
-      call: steps.map((s) => s.call).join(" / "),
-      steps,
-      note: null,
-      error: errText,
-    };
+  const cmds = ops[0];
+  const argv = ops[1];
+  const ran = __idcRunSequence(cls, cmds, argv, expected);
+  const arity = __idcArity(cls);
+  const ctorEmpty = arity && arity.required === 0;
+  if (queryHint && ctorEmpty && ran.steps && ran.steps.length === 2 && !ran.error) {
+    ran.steps = null;
+    ran.call = __idcCall(cls.name + "()." + queryHint, argv[1] || []);
   }
+  return ran;
 }
 
 function __idcResolve() {
@@ -888,7 +847,10 @@ function __idcResolve() {
 
 for (let __i = 0; __i < __tests.length; __i++) {
   const __t = __tests[__i];
-  const __args = Array.isArray(__t.args) ? __t.args : [];
+  let __args = Array.isArray(__t.args) ? __t.args : [];
+  if (Array.isArray(__t.commands) && Array.isArray(__t.arguments)) {
+    __args = [__t.commands, __t.arguments];
+  }
   const __expected = __t.expected;
   try {
     const found = __idcResolve();
@@ -898,6 +860,7 @@ for (let __i = 0; __i < __tests.length; __i++) {
     let __steps = null;
     let __note = null;
     let __err = null;
+    // Functions: result = fn(*args). Classes: construct, then call methods.
     if (found.kind === "class") {
       const ran = __idcRunClass(found.obj, __args, __expected);
       __actual = ran.actual;

@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { transform } from "sucrase";
 import { buildHarness, parseResults, MARKER } from "../src/lib/harness";
 import { SAMPLE_PROBLEMS } from "../src/lib/samples";
+import { parseTrace } from "../src/lib/trace";
 import type { TestCase, TestResult } from "../src/lib/types";
 
 let failures = 0;
@@ -79,6 +80,38 @@ function resultsFor(
       : source;
   const { stdout, stderr } = runJs(js);
   return { results: parseResults(stdout).results, stderr };
+}
+
+console.log("Error location parsing");
+{
+  const py = parseTrace(
+    [
+      "Line 12 · ValueError: not enough values to unpack (expected 4, got 1)",
+      "    uuid, folder_ids, file_ids, user_ids = t",
+      "Traceback (most recent call last):",
+      '  File "solution.py", line 12, in __init__',
+      "    uuid, folder_ids, file_ids, user_ids = t",
+      "ValueError: not enough values to unpack (expected 4, got 1)",
+    ].join("\n"),
+  );
+  check(
+    "Python traceback headline is Line 12 · ValueError",
+    py.line === 12 &&
+      py.type === "ValueError" &&
+      py.message.includes("expected 4, got 1") &&
+      py.headline.startsWith("Line 12") &&
+      py.snippet?.includes("uuid, folder_ids") === true,
+    JSON.stringify(py),
+  );
+
+  const js = parseTrace(
+    "Line 4 · TypeError: Cannot read properties of undefined\n    at owns (solution.js:4:12)",
+  );
+  check(
+    "JavaScript stack headline is Line 4 · TypeError",
+    js.line === 4 && js.type === "TypeError" && js.headline.startsWith("Line 4"),
+    JSON.stringify(js),
+  );
 }
 
 // ---------------------------------------------------------------- Python: correct vs wrong
@@ -188,9 +221,28 @@ console.log("\nPython error handling");
           !r.pass &&
           typeof r.error === "string" &&
           r.error.includes("boom") &&
+          /Line \d+/.test(r.error) &&
           (r.error.includes("Traceback") || r.error.includes("solution.py")),
       ),
     JSON.stringify(results),
+  );
+
+  const unpack = `class PermissionManager:
+    def __init__(self, teams, folders, files):
+        for t in teams:
+            uuid, folder_ids, file_ids, user_ids = t
+    def get_fewest(self, user_id):
+        return []`;
+  const unpackRun = resultsFor("python", unpack, "PermissionManager", [
+    { args: [[["one"]], [], [], "A"], expected: ["Folder1"] },
+  ]);
+  const unpackErr = unpackRun.results?.[0]?.error ?? "";
+  check(
+    "unpack error names the user line in PermissionManager.__init__",
+    /Line 4/.test(unpackErr) &&
+      unpackErr.includes("ValueError") &&
+      unpackErr.includes("expected 4, got 1"),
+    unpackErr.slice(0, 400),
   );
 
   const missing = `def somethingElse(a, b):
@@ -580,6 +632,23 @@ ${doc}`;
       seqExact.results[0]?.pass === true &&
       JSON.stringify(seqExact.results[0]?.actual) === JSON.stringify([null, ["Folder1", "Folder3"]]),
     JSON.stringify(seqExact.results),
+  );
+
+  const extraWrap = resultsFor("python", pmQuery, "PermissionManager", [
+    {
+      args: [[
+        ["PermissionManager", "get_fewest"],
+        [[[teams, folders, files]], ["A"]],
+      ]],
+      expected: [null, ["Folder1", "Folder3"]],
+    },
+  ]);
+  check(
+    "Python unwraps an extra list around [commands, argumentLists]",
+    extraWrap.results !== null &&
+      extraWrap.results[0]?.pass === true &&
+      !String(extraWrap.results[0]?.actual).includes("object at"),
+    JSON.stringify(extraWrap.results),
   );
 
   const seqQueryOnly = resultsFor("python", pmQuery, "PermissionManager", [
