@@ -11,9 +11,22 @@ export type PeerRow = {
   awareness: string;
 };
 
+export type PadAccessStatus = "missing" | "ok" | "banned";
+
+export type PadAccess = {
+  status: PadAccessStatus;
+  owner: boolean;
+};
+
 type PeerMap = Record<
   string,
-  { name: string; color: string; awareness: string; seenAt: number }
+  {
+    name: string;
+    color: string;
+    awareness: string;
+    seenAt: number;
+    userId?: string;
+  }
 >;
 
 function isSession(value: unknown): value is Session {
@@ -84,28 +97,116 @@ export async function listUserPads(userId: string): Promise<
   });
 }
 
-export async function ensurePadAccess(
+async function isBanned(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  padId: string,
+  userId: string,
+) {
+  const rows = (await sql`
+    SELECT 1 FROM pad_bans
+    WHERE pad_id = ${padId} AND user_id = ${userId}
+    LIMIT 1
+  `) as { "?column?": number }[];
+  return rows.length > 0;
+}
+
+export async function getPadAccess(
   id: string,
   userId: string,
-): Promise<"missing" | "ok"> {
+): Promise<PadAccess> {
   const sql = getSql();
-  if (!sql) return "missing";
+  if (!sql) return { status: "missing", owner: false };
   const rows = (await sql`
     SELECT owner_id FROM pads WHERE id = ${id}
   `) as { owner_id: string | null }[];
-  if (!rows[0]) return "missing";
+  if (!rows[0]) return { status: "missing", owner: false };
+  if (await isBanned(sql, id, userId)) return { status: "banned", owner: false };
+  return { status: "ok", owner: rows[0].owner_id === userId };
+}
+
+export async function ensurePadAccess(
+  id: string,
+  userId: string,
+): Promise<PadAccess> {
+  const sql = getSql();
+  if (!sql) return { status: "missing", owner: false };
+  const rows = (await sql`
+    SELECT owner_id FROM pads WHERE id = ${id}
+  `) as { owner_id: string | null }[];
+  if (!rows[0]) return { status: "missing", owner: false };
+  if (await isBanned(sql, id, userId)) return { status: "banned", owner: false };
   if (!rows[0].owner_id) {
     await sql`
       UPDATE pads SET owner_id = ${userId}
       WHERE id = ${id} AND owner_id IS NULL
     `;
-    return "ok";
+    const claimed = (await sql`
+      SELECT owner_id FROM pads WHERE id = ${id}
+    `) as { owner_id: string | null }[];
+    const owner = claimed[0]?.owner_id === userId;
+    if (!owner) {
+      await sql`
+        INSERT INTO pad_members (pad_id, user_id)
+        VALUES (${id}, ${userId})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+    return { status: "ok", owner };
   }
-  if (rows[0].owner_id === userId) return "ok";
+  if (rows[0].owner_id === userId) return { status: "ok", owner: true };
   await sql`
     INSERT INTO pad_members (pad_id, user_id)
     VALUES (${id}, ${userId})
     ON CONFLICT DO NOTHING
+  `;
+  return { status: "ok", owner: false };
+}
+
+export async function kickPadMember(
+  padId: string,
+  ownerId: string,
+  opts: { clientId: string; userId?: string },
+): Promise<"ok" | "forbidden" | "missing" | "unknown"> {
+  const sql = getSql();
+  if (!sql) return "missing";
+  const rows = (await sql`
+    SELECT owner_id, peers FROM pads WHERE id = ${padId}
+  `) as { owner_id: string | null; peers: unknown }[];
+  if (!rows[0]) return "missing";
+  if (rows[0].owner_id !== ownerId) return "forbidden";
+
+  const peers = asPeerMap(rows[0].peers);
+  const fromClient = peers[opts.clientId]?.userId?.trim() || "";
+  const hinted = opts.userId?.trim() || "";
+  const hintedLive =
+    hinted &&
+    Object.values(peers).some((peer) => peer.userId === hinted);
+  const target = fromClient || (hintedLive ? hinted : "");
+  if (!target) return "unknown";
+  if (target === ownerId) return "forbidden";
+
+  await sql`
+    DELETE FROM pad_members
+    WHERE pad_id = ${padId} AND user_id = ${target}
+  `;
+  await sql`
+    INSERT INTO pad_bans (pad_id, user_id)
+    VALUES (${padId}, ${target})
+    ON CONFLICT DO NOTHING
+  `;
+  await sql`
+    UPDATE pads SET peers = (
+      SELECT COALESCE(jsonb_object_agg(
+        key,
+        CASE
+          WHEN value->>'userId' = ${target}
+            THEN jsonb_set(value, '{seenAt}', '0'::jsonb)
+          ELSE value
+        END
+      ), '{}'::jsonb)
+      FROM jsonb_each(COALESCE(pads.peers, '{}'::jsonb))
+    )
+    WHERE id = ${padId}
   `;
   return "ok";
 }
@@ -123,6 +224,10 @@ export async function deleteUserPad(id: string, userId: string) {
 export async function upsertPad(session: Session, userId: string) {
   const sql = getSql();
   if (!sql) return false;
+  const existing = (await sql`
+    SELECT id FROM pads WHERE id = ${session.id}
+  `) as { id: string }[];
+  if (existing[0] && (await isBanned(sql, session.id, userId))) return false;
   const initial = encodeInitialDoc(session);
   await sql`
     INSERT INTO pads (id, payload, ydoc, owner_id)
@@ -137,7 +242,7 @@ export async function upsertPad(session: Session, userId: string) {
       updated_at = now()
   `;
   const access = await ensurePadAccess(session.id, userId);
-  return access === "ok";
+  return access.status === "ok";
 }
 
 export async function getPad(id: string): Promise<Session | null> {
@@ -165,6 +270,7 @@ export async function applyPadSync(opts: {
   clientId: string;
   name: string;
   color: string;
+  userId: string;
   awareness?: string;
 }): Promise<{ missing: true } | { update: string; peers: PeerRow[]; left: string[] }> {
   const sql = getSql();
@@ -175,6 +281,7 @@ export async function applyPadSync(opts: {
     [opts.clientId]: {
       name: opts.name,
       color: opts.color,
+      userId: opts.userId,
       awareness: opts.awareness ?? "",
       seenAt: Date.now(),
     },

@@ -8,18 +8,22 @@ import { CodePane } from "./CodePane";
 import { ConsolePane } from "./ConsolePane";
 import { NotesPane } from "./NotesPane";
 import { PresenceBar } from "./PresenceBar";
+import { PlusBadge } from "./PlusBadge";
 import { ProblemPanel } from "./ProblemPanel";
 import { SettingsModal } from "./SettingsModal";
 import { Split } from "./Split";
 import { UserMenu } from "./UserMenu";
 import { codeKey, META_KEY, NOTES_KEY } from "@/lib/collab/fields";
+import { formatPeerPlace, peerPlace } from "@/lib/collab/place";
+import type { PeerInfo } from "@/lib/collab/provider";
 import { useCollab } from "@/lib/collab/use-collab";
+import { useRemoteActivity } from "@/lib/collab/use-activity";
 import { executeCode } from "@/lib/execute";
 import { LANGUAGES, NO_RUNNER_MESSAGE, languageMeta } from "@/lib/languages";
 import { warmPython, type PythonStage } from "@/lib/python";
 import { requestProblem } from "@/lib/api";
 import type { AppUser } from "@/lib/auth/types";
-import { fetchPadWithRetry, publishPad } from "@/lib/pads-remote";
+import { fetchPadWithRetry, kickPadUser, publishPad } from "@/lib/pads-remote";
 import { makeSession } from "@/lib/session";
 import {
   getServerSessionsSnapshot,
@@ -86,6 +90,11 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
   const [copied, setCopied] = useState(false);
   const [shareHint, setShareHint] = useState("");
   const [pyStage, setPyStage] = useState<PythonStage | null>(null);
+  const [kicked, setKicked] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+  const [followClientId, setFollowClientId] = useState<number | null>(null);
+  const [kickingId, setKickingId] = useState<string | null>(null);
+  const [hiddenPeerIds, setHiddenPeerIds] = useState<string[]>([]);
   const showPyStage = (stage: PythonStage) =>
     setPyStage(stage === "downloading" || stage === "starting" ? stage : null);
   const runRef = useRef<(kind: "run" | "tests" | "submit") => Promise<void>>(
@@ -93,12 +102,21 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
   );
 
   const collab = useCollab(
-    readyId === id && session ? id : null,
+    kicked || readyId !== id || !session ? null : id,
     session,
     http,
     user,
+    () => setKicked(true),
   );
   const { doc, awareness, status, peers, synced, setName } = collab;
+  const viewingNotes = wide ? leftTab === "notes" : mobileTab === "notes";
+  const viewingCode = wide || mobileTab === "code";
+  const { tabUnread, peerHits, clearPeer } = useRemoteActivity(
+    doc,
+    awareness,
+    synced,
+    { notes: viewingNotes, code: viewingCode },
+  );
 
   function persist(next: Session) {
     saveSession(next);
@@ -220,7 +238,15 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
     void fetchPadWithRetry(id)
       .then((found) => {
         if (cancelled) return;
-        if (found) saveSession({ ...found, id });
+        if (found === "kicked") {
+          setKicked(true);
+          setLooked(true);
+          return;
+        }
+        if (found) {
+          saveSession({ ...found.session, id });
+          setIsOwner(found.owner);
+        }
         setLooked(true);
       })
       .catch(() => {
@@ -237,7 +263,12 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
     let cancelled = false;
     void publishPad(current).then((result) => {
       if (cancelled) return;
-      setHttp(result === "ok");
+      if (result.status === "kicked") {
+        setKicked(true);
+        return;
+      }
+      setHttp(result.status === "ok");
+      if (result.status === "ok") setIsOwner(result.owner);
       setReadyId(current.id);
     });
     return () => {
@@ -300,6 +331,86 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
     return () => meta.unobserve(apply);
   }, [doc]);
 
+  useEffect(() => {
+    awareness?.setLocalStateField("language", language);
+  }, [awareness, language]);
+
+  function peekPeer(peer: PeerInfo) {
+    clearPeer(peer.id);
+    if (!session || !doc || !awareness) return;
+    const place = peerPlace(awareness, peer.clientId, doc);
+    if (place?.surface === "notes") {
+      setLeftTab("notes");
+      setMobileTab("notes");
+      return;
+    }
+    setMobileTab("code");
+    if (place?.language && place.language !== session.language) {
+      const next = place.language;
+      const existing = session.codeByLanguage[next];
+      if (next === "python") warmPython(showPyStage);
+      doc.getMap(META_KEY).set("language", next);
+      persist({
+        ...session,
+        language: next,
+        codeByLanguage: {
+          ...session.codeByLanguage,
+          [next]:
+            existing ??
+            session.problem.starterCode[next] ??
+            session.codeByLanguage[session.language] ??
+            "",
+        },
+      });
+    }
+    setFollowClientId(peer.clientId);
+  }
+
+  useEffect(() => {
+    if (followClientId == null) return;
+    const timer = window.setTimeout(() => setFollowClientId(null), 1200);
+    return () => window.clearTimeout(timer);
+  }, [followClientId, language]);
+
+  async function kickPeer(peer: PeerInfo) {
+    setKickingId(peer.id);
+    setBanner("");
+    try {
+      const result = await kickPadUser(id, {
+        clientId: peer.clientId,
+        userId: peer.id,
+      });
+      if (result === "ok") {
+        setHiddenPeerIds((current) =>
+          current.includes(peer.id) ? current : [...current, peer.id],
+        );
+        return true;
+      }
+      setBanner(
+        result === "unknown"
+          ? "They dropped off before they could be kicked. Try again if they rejoin."
+          : "Could not kick that person.",
+      );
+      return false;
+    } finally {
+      setKickingId(null);
+    }
+  }
+
+  if (kicked) {
+    return (
+      <div className="flex min-h-full flex-col items-center justify-center gap-3 text-center">
+        <p className="text-lg font-medium">You were removed from this pad</p>
+        <p className="max-w-sm text-sm text-mute">
+          The owner kicked you out. You can still create your own pad from home.
+        </p>
+        <Link href="/" className="text-sm text-mint hover:underline">
+          Back home
+        </Link>
+      </div>
+    );
+  }
+
   if (!hydrated || (!session && !looked)) {
     return (
       <div className="flex min-h-full items-center justify-center text-sm text-mute">
@@ -336,9 +447,10 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
         <button
           type="button"
           onClick={() => setLeftTab("notes")}
-          className={`rounded-md px-3 py-1 text-sm ${leftTab === "notes" ? "bg-white/10" : "text-mute"}`}
+          className={`inline-flex items-center rounded-md px-3 py-1 text-sm ${leftTab === "notes" ? "bg-white/10" : "text-mute"}`}
         >
           Notes
+          <PlusBadge count={tabUnread.notes} className="ml-1.5" />
         </button>
       </div>
       <div className="min-h-0 flex-1">
@@ -353,6 +465,7 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
             ytext={doc && synced ? doc.getText(NOTES_KEY) : null}
             value={session.notes ?? ""}
             onChange={(notes) => persist({ ...session, notes })}
+            onFocus={() => awareness?.setLocalStateField("surface", "notes")}
           />
         )}
       </div>
@@ -367,6 +480,9 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
           code={code}
           ytext={doc?.getText(codeKey(language)) ?? null}
           awareness={awareness}
+          followClientId={followClientId}
+          onFollowed={() => setFollowClientId(null)}
+          onFocus={() => awareness?.setLocalStateField("surface", "code")}
           onChange={(value) => {
             if (value === code) return;
             persist({
@@ -397,6 +513,7 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
       ytext={doc && synced ? doc.getText(NOTES_KEY) : null}
       value={session.notes ?? ""}
       onChange={(notes) => persist({ ...session, notes })}
+      onFocus={() => awareness?.setLocalStateField("surface", "notes")}
     />
   );
 
@@ -415,11 +532,25 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
         </div>
         <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
           <PresenceBar
-            peers={peers}
+            peers={peers.filter(
+              (peer) => peer.self || !hiddenPeerIds.includes(peer.id),
+            )}
             status={readyId === id ? status : "connecting"}
             copied={copied}
             onShare={() => void share()}
             onNameChange={setName}
+            onPeek={peekPeer}
+            placeOf={(peer) =>
+              formatPeerPlace(
+                awareness && doc
+                  ? peerPlace(awareness, peer.clientId, doc)
+                  : null,
+              )
+            }
+            hitsOf={(peer) => peerHits[peer.id] ?? 0}
+            canKick={isOwner && http}
+            kickingId={kickingId}
+            onKick={kickPeer}
           />
           <button
             type="button"
@@ -547,16 +678,18 @@ export function PadClient({ id, user }: { id: string; user: AppUser }) {
         <button
           type="button"
           onClick={() => setMobileTab("notes")}
-          className={`rounded-md px-3 py-1 text-sm ${mobileTab === "notes" ? "bg-white/10" : "text-mute"}`}
+          className={`inline-flex items-center rounded-md px-3 py-1 text-sm ${mobileTab === "notes" ? "bg-white/10" : "text-mute"}`}
         >
           Notes
+          <PlusBadge count={tabUnread.notes} className="ml-1.5" />
         </button>
         <button
           type="button"
           onClick={() => setMobileTab("code")}
-          className={`rounded-md px-3 py-1 text-sm ${mobileTab === "code" ? "bg-white/10" : "text-mute"}`}
+          className={`inline-flex items-center rounded-md px-3 py-1 text-sm ${mobileTab === "code" ? "bg-white/10" : "text-mute"}`}
         >
           Code
+          <PlusBadge count={tabUnread.code} className="ml-1.5" />
         </button>
       </div>
 

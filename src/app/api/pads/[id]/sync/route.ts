@@ -31,8 +31,11 @@ export async function POST(
     return NextResponse.json({ error: "Live pads are not configured" }, { status: 503 });
   }
   const access = await ensurePadAccess(id, gate.user.id);
-  if (access === "missing") {
+  if (access.status === "missing") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  if (access.status === "banned") {
+    return NextResponse.json({ error: "kicked" }, { status: 403 });
   }
 
   const body = (await req.json()) as SyncBody;
@@ -61,6 +64,7 @@ export async function POST(
       clientId,
       name: String(body.peer?.name ?? "Guest").slice(0, 24),
       color: String(body.peer?.color ?? "#3ee0b2").slice(0, 16),
+      userId: gate.user.id,
       awareness: body.awareness?.slice(0, 200_000),
     });
     if ("missing" in result) {

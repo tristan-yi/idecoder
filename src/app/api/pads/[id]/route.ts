@@ -5,6 +5,7 @@ import {
   deleteUserPad,
   ensurePadAccess,
   getPad,
+  getPadAccess,
   upsertPad,
 } from "@/lib/collab/store";
 import { hasDatabase } from "@/lib/db";
@@ -27,15 +28,18 @@ export async function GET(
     return NextResponse.json({ error: "Live pads are not configured" }, { status: 503 });
   }
   const access = await ensurePadAccess(id, gate.user.id);
-  if (access === "missing") {
+  if (access.status === "missing") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  if (access.status === "banned") {
+    return NextResponse.json({ error: "kicked" }, { status: 403 });
   }
   const session = await getPad(id);
   if (!session) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   return NextResponse.json(
-    { session },
+    { session, owner: access.owner },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -61,8 +65,15 @@ export async function PUT(
     return NextResponse.json({ error: "invalid session" }, { status: 400 });
   }
 
-  await upsertPad(session, gate.user.id);
-  return NextResponse.json({ ok: true });
+  const saved = await upsertPad(session, gate.user.id);
+  const access = await getPadAccess(id, gate.user.id);
+  if (access.status === "banned") {
+    return NextResponse.json({ error: "kicked" }, { status: 403 });
+  }
+  if (!saved) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true, owner: access.owner });
 }
 
 export async function DELETE(

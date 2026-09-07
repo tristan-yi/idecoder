@@ -16,14 +16,19 @@ export function useCollab(
   session: Session | null,
   http: boolean,
   account?: { id: string; name: string },
+  onKicked?: () => void,
 ) {
   const [status, setStatus] = useState<CollabStatus>("connecting");
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [synced, setSynced] = useState(false);
   const [provider, setProvider] = useState<PadProvider | null>(null);
   const seedRef = useRef(session);
+  const onKickedRef = useRef(onKicked);
   useEffect(() => {
     seedRef.current = session;
+  });
+  useEffect(() => {
+    onKickedRef.current = onKicked;
   });
 
   useEffect(() => {
@@ -36,6 +41,9 @@ export function useCollab(
     };
     room.onPeers = () => {
       if (!cancelled) setPeers(peersFromAwareness(room.awareness));
+    };
+    room.onKicked = () => {
+      if (!cancelled) onKickedRef.current?.();
     };
 
     void (async () => {

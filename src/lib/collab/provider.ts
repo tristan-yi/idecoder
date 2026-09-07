@@ -12,9 +12,12 @@ export type CollabStatus = "connecting" | "live" | "local" | "offline";
 
 export type PeerInfo = {
   clientId: number;
+  id: string;
   name: string;
   color: string;
   self: boolean;
+  language?: string;
+  surface?: "code" | "notes";
 };
 
 export function peersFromAwareness(awareness: Awareness): PeerInfo[] {
@@ -24,9 +27,12 @@ export function peersFromAwareness(awareness: Awareness): PeerInfo[] {
     if (!user) return;
     const info: PeerInfo = {
       clientId,
+      id: user.id || `c:${clientId}`,
       name: user.name || "Guest",
       color: user.color || "#3ee0b2",
       self: clientId === awareness.clientID,
+      language: typeof state.language === "string" ? state.language : undefined,
+      surface: state.surface === "notes" ? "notes" : "code",
     };
     const key = user.id || `c:${clientId}`;
     const existing = byKey.get(key);
@@ -59,6 +65,7 @@ export class PadProvider {
   private hidden = false;
   onStatus?: (status: CollabStatus) => void;
   onPeers?: () => void;
+  onKicked?: () => void;
 
   constructor(opts: {
     padId: string;
@@ -213,11 +220,20 @@ export class PadProvider {
           update: merged ? toB64(merged) : undefined,
           awareness: toB64(encodeAwarenessUpdate(this.awareness, [this.doc.clientID])),
           clientId: String(this.doc.clientID),
-          peer: { name: this.identity.name, color: this.identity.color },
+          peer: {
+            name: this.identity.name,
+            color: this.identity.color,
+            userId: this.identity.id,
+          },
         }),
         signal: AbortSignal.timeout(15000),
       });
       if (this.closed) return;
+      if (res.status === 403) {
+        this.onKicked?.();
+        this.destroy();
+        return;
+      }
       if (res.status === 503) {
         this.http = false;
         this.onStatus?.("local");

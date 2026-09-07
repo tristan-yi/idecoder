@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import type { Awareness } from "y-protocols/awareness";
@@ -9,24 +9,52 @@ import { MonacoBinding } from "@/lib/collab/monaco-binding";
 import type { LanguageId } from "@/lib/types";
 import { languageMeta } from "@/lib/languages";
 
+export type CodePaneHandle = {
+  revealPeer: (clientId: number) => boolean;
+};
+
 export function CodePane({
   language,
   code,
   onChange,
   ytext,
   awareness,
+  followClientId = null,
+  onFollowed,
+  onFocus,
+  ref,
 }: {
   language: LanguageId;
   code: string;
   onChange: (value: string) => void;
   ytext?: Y.Text | null;
   awareness?: Awareness | null;
+  followClientId?: number | null;
+  onFollowed?: () => void;
+  onFocus?: () => void;
+  ref?: Ref<CodePaneHandle>;
 }) {
   const meta = languageMeta(language);
   const [editor, setEditor] = useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const bindingRef = useRef<MonacoBinding | null>(null);
+  const onFocusRef = useRef(onFocus);
+  const onFollowedRef = useRef(onFollowed);
   const live = Boolean(ytext && awareness);
+  onFocusRef.current = onFocus;
+  onFollowedRef.current = onFollowed;
+
+  useEffect(() => {
+    const handle: CodePaneHandle = {
+      revealPeer: (clientId) => bindingRef.current?.revealPeer(clientId) ?? false,
+    };
+    if (typeof ref === "function") ref(handle);
+    else if (ref) ref.current = handle;
+    return () => {
+      if (typeof ref === "function") ref(null);
+      else if (ref) ref.current = null;
+    };
+  }, [ref]);
 
   useEffect(() => {
     const monaco = monacoRef.current;
@@ -46,6 +74,12 @@ export function CodePane({
       bindingRef.current = null;
     };
   }, [editor, ytext, awareness]);
+
+  useEffect(() => {
+    if (followClientId == null || !bindingRef.current) return;
+    const ok = bindingRef.current.revealPeer(followClientId);
+    if (ok) onFollowedRef.current?.();
+  }, [followClientId, editor, ytext]);
 
   const handleMount: OnMount = (instance, monaco) => {
     monacoRef.current = monaco;
@@ -71,6 +105,7 @@ export function CodePane({
       renderLineHighlight: "line",
       cursorBlinking: "smooth",
     });
+    instance.onDidFocusEditorWidget(() => onFocusRef.current?.());
     setEditor(instance);
   };
 

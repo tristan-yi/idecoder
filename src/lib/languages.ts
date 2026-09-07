@@ -55,5 +55,9 @@ export function languageMeta(id: LanguageId) {
   return LANGUAGES.find((l) => l.id === id) ?? LANGUAGES[0];
 }
 
+export function isLanguageId(value: unknown): value is LanguageId {
+  return LANGUAGES.some((lang) => lang.id === value);
+}
+
 export const NO_RUNNER_MESSAGE =
   "There is no runner for this language. The hosted execution service this app used (Piston) shut down permanently on 2026-08-31, and Java and C++ cannot run in the browser. You can still write and save code here, and JavaScript, TypeScript and Python all run and test locally in your browser.";

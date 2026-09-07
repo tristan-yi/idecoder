@@ -98,13 +98,29 @@ body {
   border-left: 2px solid currentColor;
 }
 
-.yRemoteSelectionHead::after {
-  content: "";
-  position: absolute;
-  top: -5px;
-  left: -4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: currentColor;
+@keyframes idc-peek {
+  0% {
+    background-color: color-mix(in srgb, var(--color-mint) 32%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes idc-plus {
+  0% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.idc-plus {
+  animation: idc-plus 0.28s ease;
 }

@@ -8,10 +8,12 @@ export function NotesPane({
   ytext,
   value,
   onChange,
+  onFocus,
 }: {
   ytext?: Y.Text | null;
   value: string;
   onChange: (value: string) => void;
+  onFocus?: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -33,6 +35,7 @@ export function NotesPane({
       {ytext ? (
         <textarea
           ref={ref}
+          onFocus={onFocus}
           placeholder="Sketch the approach, paste examples, leave a note for your pair…"
           className="min-h-0 flex-1 resize-none bg-ink px-5 py-4 text-[15px] leading-7 text-zinc-200 outline-none placeholder:text-zinc-600"
         />
@@ -40,6 +43,7 @@ export function NotesPane({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={onFocus}
           placeholder="Sketch the approach, paste examples, leave a note for your pair…"
           className="min-h-0 flex-1 resize-none bg-ink px-5 py-4 text-[15px] leading-7 text-zinc-200 outline-none placeholder:text-zinc-600"
         />

@@ -88,6 +88,41 @@ export class MonacoBinding {
     }
   }
 
+  revealPeer(clientId: number): boolean {
+    const editor = [...this.editors][0];
+    if (!editor || !this.awareness) return false;
+    const state = this.awareness.getStates().get(clientId);
+    if (!state?.selection) return false;
+    const { head, anchor } = state.selection as {
+      anchor?: Y.RelativePosition;
+      head?: Y.RelativePosition;
+    };
+    const target = head ?? anchor;
+    if (!target) return false;
+    const abs = Y.createAbsolutePositionFromRelativePosition(target, this.doc);
+    if (!abs || abs.type !== this.ytext) return false;
+    const pos = this.monacoModel.getPositionAt(abs.index);
+    editor.revealPositionInCenter(pos);
+    const flash = editor.deltaDecorations([], [
+      {
+        range: new this.monaco.Range(
+          pos.lineNumber,
+          1,
+          pos.lineNumber,
+          this.monacoModel.getLineMaxColumn(pos.lineNumber),
+        ),
+        options: {
+          isWholeLine: true,
+          className: "yRemotePeek",
+        },
+      },
+    ]);
+    window.setTimeout(() => {
+      editor.deltaDecorations(flash, []);
+    }, 1600);
+    return true;
+  }
+
   destroy() {
     this.monacoChangeHandler.dispose();
     this.monacoDisposeHandler.dispose();
