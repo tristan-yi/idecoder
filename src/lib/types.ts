@@ -35,6 +35,10 @@ export type Problem = {
   starterCode: Partial<Record<LanguageId, string>>;
   exampleTests: TestCase[];
   hiddenTests: TestCase[];
+  /** Set after generation when examples/tests still disagree. */
+  warnings?: string[];
+  /** Auto-fixes applied so the test arrays match the written examples. */
+  generationNotes?: string[];
 };
 
 export type Session = {

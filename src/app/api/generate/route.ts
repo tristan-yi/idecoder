@@ -6,10 +6,16 @@ import {
   extractJson,
   hasServerKey,
   resolveAuth,
+  type LlmAuth,
 } from "@/lib/llm/server";
+import {
+  finalizeGeneratedProblem,
+  stripGenerationMeta,
+  type ConsistencyIssue,
+} from "@/lib/problem-consistency";
 import type { LanguageId, Problem } from "@/lib/types";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 const SYSTEM = `You turn a user's coding question, interview prompt, or rough idea into a LeetCode-style problem.
 
@@ -57,7 +63,9 @@ Rules:
   Constructor argv[0] must be the constructor's positional args only, matching __init__/constructor parameters exactly. Do not wrap those args in an extra list, and do not append leftover method inputs such as user_id to the constructor step.
   Do NOT emit tests that only call the constructor with args [] and expected null.
   If a class has one query method, a flat case like args [constructor..., queryArg] with expected = the query return is also valid; the harness will construct then call the query method. Never expect the constructed object itself.
-  Examples should show the same command list in Input and the result list in Output.`;
+  Examples should show the same command list in Input and the result list in Output.
+- CONSISTENCY: examples[i].input, examples[i].explanation, and exampleTests[i].args must describe the SAME data. expected must be the result of the stated algorithm on that test's own args — never copy an explanation's answer onto a different graph.
+- Hierarchical permission / folder / team trees: each node's user_ids in the constructor arrays must match the explanation's direct-access claims exactly. If the explanation says User A has direct access to Folder1 and Folder3, those nodes contain "A" and ancestor/root/parent nodes have []. Do not put leftover users on Root just because they appear elsewhere.`;
 
 function isLanguageId(value: string): value is LanguageId {
   return ["javascript", "typescript", "python", "java", "cpp"].includes(value);
@@ -116,24 +124,52 @@ function buildUserMessage(options: {
   source?: Problem;
 }) {
   if (options.mode === "similar" && options.source) {
+    const source = stripGenerationMeta(options.source);
     return `Create a NEW LeetCode-style problem similar to this one, not a copy.
 
-The new problem should train the same skills (${options.source.topics.join(", ") || "same topics"}) at about ${options.source.difficulty} difficulty, with a different story, title, and function name.
+The new problem should train the same skills (${source.topics.join(", ") || "same topics"}) at about ${source.difficulty} difficulty, with a different story, title, and function name.
 
 Source problem:
-Title: ${options.source.title}
-Difficulty: ${options.source.difficulty}
-Topics: ${options.source.topics.join(", ")}
+Title: ${source.title}
+Difficulty: ${source.difficulty}
+Topics: ${source.topics.join(", ")}
 Description:
-${options.source.description}
+${source.description}
 
 Examples:
-${options.source.examples.map((ex, i) => `${i + 1}. Input: ${ex.input} → Output: ${ex.output}`).join("\n")}
+${source.examples.map((ex, i) => `${i + 1}. Input: ${ex.input} → Output: ${ex.output}`).join("\n")}
 
 Extra direction from the user (optional): ${options.prompt}`;
   }
 
   return `Create a LeetCode-style problem from this prompt. Format it exactly like a LeetCode statement (title, difficulty, topics, description, examples, constraints, follow-ups, starter code, tests):\n\n${options.prompt}`;
+}
+
+async function repairInconsistentProblem(
+  auth: LlmAuth,
+  problem: Problem,
+  issues: ConsistencyIssue[],
+): Promise<Problem | null> {
+  const text = await complete({
+    auth,
+    system: `${SYSTEM}
+
+You are correcting a previously generated problem. Return ONLY the full problem JSON. Prefer keeping the written examples and explanations; fix exampleTests and hiddenTests (especially each node's user_ids) so the raw input matches the story. expected must be derivable from that test's own args.`,
+    messages: [
+      {
+        role: "user",
+        content: `Fix these consistency errors:
+
+${issues.map((issue) => `- ${issue.message}`).join("\n")}
+
+Current problem JSON:
+${JSON.stringify(stripGenerationMeta(problem))}`,
+      },
+    ],
+    temperature: 0.15,
+    json: true,
+  });
+  return normalizeProblem(extractJson(text));
 }
 
 export async function GET() {
@@ -176,7 +212,10 @@ export async function POST(req: Request) {
       temperature: body.mode === "similar" ? 0.85 : 0.35,
       json: true,
     });
-    const problem = normalizeProblem(extractJson(text));
+    const draft = normalizeProblem(extractJson(text));
+    const problem = await finalizeGeneratedProblem(draft, (current, issues) =>
+      repairInconsistentProblem(auth, current, issues),
+    );
     return NextResponse.json({ problem });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Generation failed";

@@ -2,7 +2,7 @@
 
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, Info, Loader2, Sparkles } from "lucide-react";
 import type { Problem } from "@/lib/types";
 
 const difficultyClass: Record<Problem["difficulty"], string> = {
@@ -45,6 +45,50 @@ export function ProblemPanel({
           </button>
         )}
       </div>
+      {((problem.warnings && problem.warnings.length > 0) ||
+        (problem.generationNotes && problem.generationNotes.length > 0)) && (
+        <div
+          className={`mb-5 rounded-lg border px-3 py-2.5 text-sm ${
+            problem.warnings && problem.warnings.length > 0
+              ? "border-medium/40 bg-medium/10 text-zinc-200"
+              : "border-mint/30 bg-mint/10 text-zinc-200"
+          }`}
+        >
+          <div
+            className={`mb-1.5 flex items-center gap-1.5 font-medium ${
+              problem.warnings && problem.warnings.length > 0 ? "text-medium" : "text-mint"
+            }`}
+          >
+            {problem.warnings && problem.warnings.length > 0 ? (
+              <AlertTriangle size={14} />
+            ) : (
+              <Info size={14} />
+            )}
+            {problem.warnings && problem.warnings.length > 0
+              ? "Review tests before practicing"
+              : "Tests were auto-corrected"}
+          </div>
+          <p className="mb-2 text-[12.5px] leading-5 text-mute">
+            {problem.warnings && problem.warnings.length > 0
+              ? "The generated examples and test arrays disagreed. Fix the items below before treating this pad as final."
+              : "The example text and raw test data did not match, so the test arrays were updated to follow the written explanation."}
+          </p>
+          {problem.generationNotes && problem.generationNotes.length > 0 && (
+            <ul className="mb-2 list-disc space-y-1 pl-4 text-[12.5px] leading-5 text-zinc-300">
+              {problem.generationNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
+          {problem.warnings && problem.warnings.length > 0 && (
+            <ul className="list-disc space-y-1 pl-4 text-[12.5px] leading-5 text-zinc-300">
+              {problem.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {problem.topics.length > 0 && (
         <div className="mb-5 flex flex-wrap gap-1.5">
           {problem.topics.map((topic) => (
